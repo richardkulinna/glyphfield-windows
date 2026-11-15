@@ -4,3 +4,4 @@ web/
 dist/
 build-info.json
 test-results/
+.local/

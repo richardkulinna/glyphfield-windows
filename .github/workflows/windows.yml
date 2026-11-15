@@ -45,6 +45,8 @@ jobs:
       NEXT_PUBLIC_STUDIO_URL: http://127.0.0.1:43127
       NODE_OPTIONS: --max-old-space-size=6144
     steps:
+      - name: Preserve upstream line endings
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -68,6 +70,7 @@ jobs:
         working-directory: vendor
       - run: pnpm typecheck
         working-directory: vendor
+      - run: node scripts/prepare-tests.cjs
       - run: pnpm test
         working-directory: vendor
       - run: npm run prepare:web
