@@ -105,6 +105,7 @@ jobs:
       - run: npm run smoke
       - run: npm run dist
       - name: Verify actual Windows installer
+        timeout-minutes: 6
         shell: pwsh
         run: |
           $installer = (Get-ChildItem dist/*Setup*.exe).FullName

@@ -16,7 +16,6 @@ async function launch() {
     if (Date.now() > deadline) throw new Error('Desktop startup did not complete');
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  await page.waitForURL('http://127.0.0.1:43127/studio', { waitUntil: 'load', timeout: 120000 });
   await page.goto('http://127.0.0.1:43127/studio?tool=identity&project=starter');
   await page.waitForFunction(() => { try { return !!window.glyphfield?.studio.readSource(); } catch { return false; } }, null, { timeout: 90000 });
   return page;
@@ -53,7 +52,7 @@ async function launch() {
   const log = path.join(profile, 'desktop.log');
   if (fs.existsSync(log)) { fs.copyFileSync(log, 'test-results/desktop.log'); console.log(fs.readFileSync(log, 'utf8')); }
   if (instance) {
-    if (process.exitCode) instance.process().kill();
+    if (process.exitCode) require('node:child_process').execFileSync('taskkill.exe', ['/PID', String(instance.process().pid), '/T', '/F'], { windowsHide: true });
     else await instance.close();
   }
 });
