@@ -81,6 +81,7 @@ async function start() {
     ] }
   ]));
   await window.loadURL(`${origin}/studio`);
+  if (smoke) app.glyphfieldTestReady = true;
   fs.writeFileSync(path.join(profile, 'desktop-version.json'), JSON.stringify({ version: app.getVersion() }));
   if (app.isPackaged && !smoke) {
     autoUpdater.autoDownload = false;
