@@ -35,7 +35,8 @@ async function launch() {
   });
   assert.ok(kit.size > 1000);
   assert.deepEqual(kit.head, [80, 75, 3, 4]);
-  await page.screenshot({ path: 'test-results/windows-studio.png' });
+  await instance.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
+  await page.screenshot({ path: 'test-results/windows-studio.png', timeout: 60000 });
   await instance.close(); instance = null;
   page = await launch();
   await page.goto(`http://127.0.0.1:43127/studio?tool=identity&project=${encodeURIComponent(created.id)}`);
