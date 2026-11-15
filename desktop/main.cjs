@@ -1,5 +1,7 @@
 const { app, BrowserWindow, Menu, dialog, shell, utilityProcess, session } = require('electron');
 const { autoUpdater } = require('electron-updater');
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = false;
 const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
@@ -21,7 +23,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   try { backupBeforeVersion(profile, backups, app.getVersion()); }
   catch (error) { dialog.showErrorBox('Datensicherung fehlgeschlagen', `Die neue Version startet zum Schutz deiner Daten nicht.\n${error.message}`); app.exit(1); }
-  app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
+  app.on('second-instance', (_event, argv) => { if (argv.includes('--restore')) { rollback(); return; } if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
   app.whenReady().then(async () => {
     if (process.argv.includes('--restore')) { await rollback(); app.quit(); return; }
     await start();
@@ -85,6 +87,7 @@ async function start() {
     autoUpdater.on('error', (error) => { updateStatus = `Update fehlgeschlagen: ${error.message}`; log(updateStatus); });
     autoUpdater.on('update-available', (info) => { availableUpdate = true; updateStatus = `Version ${info.version} verfügbar. App → Update installieren.`; window.setTitle(`Glyphfield Windows – Update ${info.version} verfügbar`); });
     autoUpdater.on('update-not-available', () => { updateStatus = 'App ist aktuell'; });
+    autoUpdater.on('download-progress', (progress) => { updateStatus = `Update wird geladen: ${Math.round(progress.percent)} %`; if (!window.isDestroyed()) window.setTitle(`Glyphfield Windows – ${updateStatus}`); });
     autoUpdater.on('update-downloaded', (info) => { updateStatus = `Version ${info.version} bereit`; });
     checkUpdates(false);
     setInterval(() => checkUpdates(false), 6 * 60 * 60 * 1000).unref();
@@ -117,6 +120,7 @@ async function installUpdate() {
   updating = true;
   try {
     updateStatus = 'Wiederherstellungs-Installer wird gesichert …';
+    window.setTitle(`Glyphfield Windows – ${updateStatus}`);
     const installer = await keepInstaller(app.getVersion(), backups);
     updateStatus = 'Update wird heruntergeladen …';
     const files = await autoUpdater.downloadUpdate();

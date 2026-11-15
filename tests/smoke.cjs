@@ -17,6 +17,11 @@ async function launch() {
 (async () => {
   fs.mkdirSync('test-results', { recursive: true });
   let page = await launch();
+  const updatePolicy = await instance.evaluate(() => {
+    const updater = require('electron-updater').autoUpdater;
+    return { autoDownload: updater.autoDownload, autoInstallOnAppQuit: updater.autoInstallOnAppQuit };
+  });
+  assert.deepEqual(updatePolicy, { autoDownload: false, autoInstallOnAppQuit: false });
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   const created = await page.evaluate(() => window.glyphfield.studio.invoke('identity.project.create', { from: 'starter', name: 'Windows persistence check' }));
   assert.ok(created.id);

@@ -31,4 +31,7 @@ test('Windows helpers preserve old data, restore it, retain newer data and pause
   assert.equal(fs.readFileSync(path.join(backups, recovered, 'project.json'), 'utf8'), '{"name":"after update"}');
   assert.ok(fs.existsSync(path.join(backups, 'updates-paused')));
   assert.equal(fs.existsSync(path.join(backups, 'restore-error.txt')), false);
+  fs.appendFileSync(record.installer, 'tampered');
+  assert.throws(() => run('restore.ps1', ['-SavedProfile', record.profile, '-Installer', record.installer, '-ExpectedHash', record.sha256]));
+  assert.equal(fs.readFileSync(path.join(profile, 'project.json'), 'utf8'), '{"name":"before update"}');
 });
