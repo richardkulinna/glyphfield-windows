@@ -23,7 +23,7 @@
     "files": ["desktop/**", "package.json"],
     "extraResources": [{ "from": "web", "to": "web" }, { "from": "build-info.json", "to": "build-info.json" }],
     "win": { "target": "nsis", "artifactName": "Glyphfield-Windows-Setup-${version}.${ext}" },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false, "include": "desktop/installer.nsh" },
     "publish": [{ "provider": "github", "owner": "richardkulinna", "repo": "glyphfield-windows" }]
   }
 }

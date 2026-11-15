@@ -80,6 +80,15 @@ jobs:
       - run: npm run pack
       - run: npm run smoke
       - run: npm run dist
+      - name: Verify actual Windows installer
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem dist/*Setup*.exe).FullName
+          $result = Start-Process -FilePath $installer -ArgumentList '/S', '/D=C:\GlyphfieldTestInstall' -WindowStyle Hidden -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "Installer failed: $($result.ExitCode)" }
+          $env:GLYPHFIELD_TEST_EXE = 'C:\GlyphfieldTestInstall\Glyphfield Windows.exe'
+          npm run smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release

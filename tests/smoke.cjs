@@ -4,13 +4,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'glyphfield-smoke-'));
-const executablePath = path.resolve('dist/win-unpacked/Glyphfield Windows.exe');
+const executablePath = process.env.GLYPHFIELD_TEST_EXE || path.resolve('dist/win-unpacked/Glyphfield Windows.exe');
 let instance;
 async function launch() {
   instance = await electron.launch({ executablePath, args: ['--smoke-test'], env: { ...process.env, GLYPHFIELD_TEST_PROFILE: profile }, timeout: 120000 });
   const page = await instance.firstWindow({ timeout: 120000 });
+  await page.waitForURL('http://127.0.0.1:43127/studio', { waitUntil: 'load', timeout: 120000 });
   await page.goto('http://127.0.0.1:43127/studio?tool=identity&project=starter');
-  await page.waitForFunction(() => { try { return !!window.glyphfield?.studio.readSource(); } catch { return false; } }, { timeout: 90000 });
+  await page.waitForFunction(() => { try { return !!window.glyphfield?.studio.readSource(); } catch { return false; } }, null, { timeout: 90000 });
   return page;
 }
 (async () => {
@@ -30,7 +31,7 @@ async function launch() {
   await instance.close(); instance = null;
   page = await launch();
   await page.goto(`http://127.0.0.1:43127/studio?tool=identity&project=${encodeURIComponent(created.id)}`);
-  await page.waitForFunction(() => { try { return JSON.parse(window.glyphfield.studio.readSource()).name === 'Windows persistence check'; } catch { return false; } }, { timeout: 60000 });
+  await page.waitForFunction(() => { try { return JSON.parse(window.glyphfield.studio.readSource()).name === 'Windows persistence check'; } catch { return false; } }, null, { timeout: 60000 });
   const labs = await page.evaluate(async () => (await fetch('/api/labs')).json());
   assert.ok(JSON.stringify(labs).includes('identity'));
   console.log('PASS: packaged launch, isolated renderer, brand creation, ZIP export, persisted project after full restart, local API');

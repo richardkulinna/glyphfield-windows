@@ -22,7 +22,16 @@ else {
   try { backupBeforeVersion(profile, backups, app.getVersion()); }
   catch (error) { dialog.showErrorBox('Datensicherung fehlgeschlagen', `Die neue Version startet zum Schutz deiner Daten nicht.\n${error.message}`); app.exit(1); }
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
-  app.whenReady().then(start).catch((error) => { log(error.stack); dialog.showErrorBox('Glyphfield konnte nicht starten', error.message); app.quit(); });
+  app.whenReady().then(async () => {
+    if (process.argv.includes('--restore')) { await rollback(); app.quit(); return; }
+    await start();
+  }).catch(async (error) => {
+    log(error.stack);
+    const result = await dialog.showMessageBox({ type: 'error', message: 'Glyphfield konnte nicht starten', detail: error.message,
+      buttons: ['Schließen', 'Letztes Update zurücknehmen'], defaultId: 0, cancelId: 0 });
+    if (result.response === 1) await rollback();
+    app.quit();
+  });
 }
 
 async function start() {
@@ -96,7 +105,7 @@ async function checkUpdates(manual) {
 async function closeForSnapshot() {
   updating = true;
   // Destroy renderer before copying Chromium databases; flush pending session storage.
-  window.destroy();
+  if (window && !window.isDestroyed()) window.destroy();
   session.defaultSession.flushStorageData();
   await session.defaultSession.closeAllConnections();
 }
@@ -127,9 +136,9 @@ async function rollback() {
   if (updating) return;
   try {
     const file = path.join(backups, 'rollback.json');
-    if (!fs.existsSync(file)) { await dialog.showMessageBox(window, { message: 'Noch kein vorheriges Update zum Zurücknehmen vorhanden.' }); return; }
+    if (!fs.existsSync(file)) { await dialog.showMessageBox({ message: 'Noch kein vorheriges Update zum Zurücknehmen vorhanden.' }); return; }
     const record = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
-    const answer = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Abbrechen', 'Version wiederherstellen'], defaultId: 0, cancelId: 0, message: `Version ${record.version} wiederherstellen?`, detail: 'Die App stellt Programm und damalige Projektdaten wieder her. Neuere Projektdaten bleiben separat in den Sicherungen erhalten. Automatische Update-Suche wird bis zur nächsten manuellen Suche pausiert.' });
+    const answer = await dialog.showMessageBox({ type: 'warning', buttons: ['Abbrechen', 'Version wiederherstellen'], defaultId: 0, cancelId: 0, message: `Version ${record.version} wiederherstellen?`, detail: 'Die App stellt Programm und damalige Projektdaten wieder her. Neuere Projektdaten bleiben separat in den Sicherungen erhalten. Automatische Update-Suche wird bis zur nächsten manuellen Suche pausiert.' });
     if (answer.response !== 1) return;
     await closeForSnapshot();
     await launchRollback(record, profile, backups, app.getPath('exe'));
