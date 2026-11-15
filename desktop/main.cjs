@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
 const { backupBeforeVersion } = require('./profile.cjs');
-const { keepInstaller, snapshot, launchRollback } = require('./updates.cjs');
+const { keepInstaller, hashFile, launchRollback, launchInstall } = require('./updates.cjs');
 
 const smoke = process.argv.includes('--smoke-test');
 const profile = process.env.GLYPHFIELD_TEST_PROFILE && smoke ? process.env.GLYPHFIELD_TEST_PROFILE : path.join(app.getPath('appData'), 'Glyphfield Windows');
@@ -110,10 +110,13 @@ async function installUpdate() {
     updateStatus = 'Wiederherstellungs-Installer wird gesichert …';
     const installer = await keepInstaller(app.getVersion(), backups);
     updateStatus = 'Update wird heruntergeladen …';
-    await autoUpdater.downloadUpdate();
+    const files = await autoUpdater.downloadUpdate();
+    const nextInstaller = files.find((file) => file.endsWith('.exe'));
+    if (!nextInstaller) throw new Error('Update enthält keinen Windows-Installer.');
+    const previousHash = await hashFile(installer);
     await closeForSnapshot();
-    snapshot(profile, backups, app.getVersion(), installer);
-    autoUpdater.quitAndInstall(false, true);
+    await launchInstall({ profile, backups, previousInstaller: installer, previousHash, version: app.getVersion(), installer: nextInstaller, executable: app.getPath('exe') });
+    app.quit();
   } catch (error) {
     updating = false;
     dialog.showErrorBox('Update nicht installiert', error.message);
@@ -125,11 +128,11 @@ async function rollback() {
   try {
     const file = path.join(backups, 'rollback.json');
     if (!fs.existsSync(file)) { await dialog.showMessageBox(window, { message: 'Noch kein vorheriges Update zum Zurücknehmen vorhanden.' }); return; }
-    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const record = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
     const answer = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Abbrechen', 'Version wiederherstellen'], defaultId: 0, cancelId: 0, message: `Version ${record.version} wiederherstellen?`, detail: 'Die App stellt Programm und damalige Projektdaten wieder her. Neuere Projektdaten bleiben separat in den Sicherungen erhalten. Automatische Update-Suche wird bis zur nächsten manuellen Suche pausiert.' });
     if (answer.response !== 1) return;
     await closeForSnapshot();
-    launchRollback(record, profile, backups, app.getPath('exe'));
+    await launchRollback(record, profile, backups, app.getPath('exe'));
     app.quit();
   } catch (error) { updating = false; dialog.showErrorBox('Wiederherstellung fehlgeschlagen', error.message); if (window?.isDestroyed()) app.quit(); }
 }

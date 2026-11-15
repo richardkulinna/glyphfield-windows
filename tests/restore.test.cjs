@@ -1,0 +1,34 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const { hashFile } = require('../desktop/updates.cjs');
+
+test('Windows helpers preserve old data, restore it, retain newer data and pause updates', { skip: process.platform !== 'win32' }, async () => {
+  fs.mkdirSync('test-results', { recursive: true });
+  const root = fs.mkdtempSync(path.resolve('test-results', 'restore-'));
+  const profile = path.join(root, 'Glyphfield Windows');
+  const backups = `${profile}-backups`;
+  fs.mkdirSync(profile); fs.mkdirSync(backups);
+  fs.writeFileSync(path.join(profile, 'project.json'), '{"name":"before update"}');
+  const oldInstaller = path.join(backups, 'old.cmd');
+  const newInstaller = path.join(backups, 'new.cmd');
+  const executable = path.join(root, 'launch.cmd');
+  for (const file of [oldInstaller, newInstaller, executable]) fs.writeFileSync(file, '@echo off\r\nexit /b 0\r\n');
+  const hash = await hashFile(oldInstaller);
+  const env = { ...process.env, APPDATA: root, GLYPHFIELD_HELPER_TEST: '1' };
+  for (const key of Object.keys(env)) if (key.toLowerCase() === 'psmodulepath') delete env[key];
+  const run = (script, args) => execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.resolve('desktop', script), '-ParentId', '2147483647', '-Profile', profile, '-Backups', backups, '-Executable', executable, ...args], { env, windowsHide: true, timeout: 30000 });
+  run('install.ps1', ['-PreviousInstaller', oldInstaller, '-PreviousHash', hash, '-Version', '1.0.1', '-Installer', newInstaller]);
+  const record = JSON.parse(fs.readFileSync(path.join(backups, 'rollback.json'), 'utf8').replace(/^\uFEFF/, ''));
+  assert.equal(fs.readFileSync(path.join(record.profile, 'project.json'), 'utf8'), '{"name":"before update"}');
+  fs.writeFileSync(path.join(profile, 'project.json'), '{"name":"after update"}');
+  run('restore.ps1', ['-SavedProfile', record.profile, '-Installer', record.installer, '-ExpectedHash', record.sha256]);
+  assert.equal(fs.readFileSync(path.join(profile, 'project.json'), 'utf8'), '{"name":"before update"}');
+  const recovered = fs.readdirSync(backups).find((name) => name.startsWith('before-rollback-'));
+  assert.equal(fs.readFileSync(path.join(backups, recovered, 'project.json'), 'utf8'), '{"name":"after update"}');
+  assert.ok(fs.existsSync(path.join(backups, 'updates-paused')));
+  assert.equal(fs.existsSync(path.join(backups, 'restore-error.txt')), false);
+});

@@ -1,4 +1,4 @@
-param([int]$ParentId, [string]$Profile, [string]$SavedProfile, [string]$Installer, [string]$Executable, [string]$Backups)
+param([int]$ParentId, [string]$Profile, [string]$SavedProfile, [string]$Installer, [string]$Executable, [string]$Backups, [string]$ExpectedHash)
 $ErrorActionPreference = 'Stop'
 try {
   Wait-Process -Id $ParentId -ErrorAction SilentlyContinue
@@ -8,6 +8,7 @@ try {
   if (!$resolvedSaved.StartsWith($resolvedBackups, [StringComparison]::OrdinalIgnoreCase) -or !$resolvedInstaller.StartsWith($resolvedBackups, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid backup paths' }
   $expectedProfile = Join-Path $env:APPDATA 'Glyphfield Windows'
   if ([IO.Path]::GetFullPath($Profile) -ne [IO.Path]::GetFullPath($expectedProfile)) { throw 'Unexpected profile path' }
+  if ((Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ExpectedHash) { throw 'Installer checksum mismatch' }
   # Preserve the newer data as well. Never overwrite or delete the only copy.
   $recovery = Join-Path $Backups ('before-rollback-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
   Move-Item -LiteralPath $Profile -Destination $recovery
@@ -19,6 +20,7 @@ try {
   Start-Process -FilePath $Executable -WindowStyle Hidden
 } catch {
   $_ | Out-File -LiteralPath (Join-Path $Backups 'restore-error.txt')
+  if ($env:GLYPHFIELD_HELPER_TEST -eq '1') { throw }
   Add-Type -AssemblyName PresentationFramework
   [System.Windows.MessageBox]::Show("Wiederherstellung nicht abgeschlossen. Deine Daten bleiben in den Sicherungen erhalten. Details: $Backups\restore-error.txt", 'Glyphfield Wiederherstellung')
 }

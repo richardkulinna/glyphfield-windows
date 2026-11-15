@@ -16,7 +16,11 @@ Die Windows-App prüft beim Start und alle sechs Stunden auf veröffentlichte Wi
 
 Projekte liegen in `%APPDATA%\Glyphfield Windows`, getrennt von den Programmdateien. Der lokale Ursprung `http://127.0.0.1:43127` bleibt stabil, damit Browserdaten auch nach Updates erreichbar bleiben. Ein belegter Port führt zu einer verständlichen Fehlermeldung, nicht zu einem leeren Ersatzprofil.
 
-Vor Versionswechseln werden Daten gesichert. Das App-Menü öffnet Daten und Sicherungen. Beim Zurücksetzen immer auch den zur alten Version passenden Datenstand verwenden: Neue Datenformate müssen nicht rückwärtskompatibel sein. Neuere Daten bleiben als separate Sicherung erhalten. Externe Dateien und seit der Sicherung noch nicht gespeicherte Änderungen sind nicht Bestandteil der Wiederherstellung.
+Unter **App → Update installieren** lädt die App zunächst den bisherigen Installer samt verifizierter SHA-256-Prüfsumme und das neue Update. Erst nach dem vollständigen Beenden der App kopiert ein separater Helfer die geschlossenen Datenbanken. Schlägt diese Sicherung fehl, wird nicht installiert.
+
+**App → Letztes Update zurücknehmen** installiert den gesicherten Vorgänger und stellt dessen Projektdaten wieder her. Neuere Daten bleiben zusätzlich als `before-rollback-…` erhalten. Danach pausieren Update-Prüfungen, bis du manuell wieder nach Updates suchst. Es wird der unmittelbare Vorgänger gesichert; dessen Eignung für jeden individuellen Arbeitsablauf kann kein automatischer Test garantieren.
+
+Das App-Menü öffnet Daten und Sicherungen. Externe Dateien und seit der Sicherung noch nicht gespeicherte Änderungen sind nicht Bestandteil der Wiederherstellung. Beim ersten Installieren existiert noch kein Vorgänger. Für das erste Update muss der bisherige Installer auf GitHub erreichbar sein; sonst wird die Installation abgebrochen. Sicherungen werden nicht automatisch gelöscht.
 
 ## Entwicklung und eigene Erweiterungen
 

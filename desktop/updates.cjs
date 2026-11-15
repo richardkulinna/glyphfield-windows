@@ -4,6 +4,11 @@ const crypto = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { spawn } = require('node:child_process');
+function helperEnvironment() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.toLowerCase() === 'psmodulepath') delete env[key];
+  return env;
+}
 
 async function keepInstaller(version, backups) {
   const folder = path.join(backups, `installer-${version}`);
@@ -28,20 +33,24 @@ async function hashFile(file) {
   for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
   return hash.digest('hex');
 }
-function snapshot(profile, backups, version, installer) {
-  const directory = path.join(backups, `rollback-${Date.now()}-v${version}`);
-  fs.cpSync(profile, path.join(directory, 'profile'), { recursive: true, filter: (file) => !['Cache', 'Code Cache', 'GPUCache', 'Crashpad'].includes(path.basename(file)) });
-  const record = { version, profile: path.join(directory, 'profile'), installer, created: new Date().toISOString() };
-  fs.writeFileSync(path.join(backups, 'rollback.json'), JSON.stringify(record, null, 2));
-  return record;
-}
-function launchRollback(record, profile, backups, executable) {
+async function launchRollback(record, profile, backups, executable) {
   if (!fs.existsSync(record.installer) || !fs.existsSync(record.profile)) throw new Error('Wiederherstellungsdateien fehlen.');
   const script = path.join(backups, 'restore.ps1');
   fs.copyFileSync(path.join(__dirname, 'restore.ps1'), script);
   const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script,
     '-ParentId', String(process.pid), '-Profile', profile, '-SavedProfile', record.profile, '-Installer', record.installer,
-    '-Executable', executable, '-Backups', backups], { detached: true, windowsHide: true, stdio: 'ignore' });
+    '-Executable', executable, '-Backups', backups, '-ExpectedHash', record.sha256], { detached: true, windowsHide: true, stdio: 'ignore', env: helperEnvironment() });
+  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
   child.unref();
 }
-module.exports = { keepInstaller, hashFile, snapshot, launchRollback };
+async function launchInstall({ profile, backups, previousInstaller, previousHash, version, installer, executable }) {
+  const script = path.join(backups, 'install.ps1');
+  fs.copyFileSync(path.join(__dirname, 'install.ps1'), script);
+  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script,
+    '-ParentId', String(process.pid), '-Profile', profile, '-Backups', backups, '-PreviousInstaller', previousInstaller,
+    '-PreviousHash', previousHash, '-Version', version, '-Installer', installer, '-Executable', executable],
+  { detached: true, windowsHide: true, stdio: 'ignore', env: helperEnvironment() });
+  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+  child.unref();
+}
+module.exports = { keepInstaller, hashFile, launchRollback, launchInstall };
