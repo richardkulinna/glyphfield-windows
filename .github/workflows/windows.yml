@@ -1,0 +1,120 @@
+name: Windows release and upstream updates
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.upstream.outputs.changed }}
+      sha: ${{ steps.upstream.outputs.sha }}
+      version: ${{ steps.upstream.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/github-script@v7
+        id: upstream
+        with:
+          script: |
+            const config = require('./upstream.json');
+            const [owner, repo] = config.repository.split('/');
+            const { data } = await github.rest.repos.getCommit({ owner, repo, ref: config.branch });
+            const marker = `Upstream: ${data.sha}\nDesktop: ${context.sha}`;
+            let previous = '';
+            try { previous = (await github.rest.repos.getLatestRelease(context.repo)).data.body || ''; }
+            catch (e) { if (e.status !== 404) throw e; }
+            core.setOutput('changed', !previous.includes(marker));
+            core.setOutput('sha', data.sha);
+            core.setOutput('version', `1.0.${context.runNumber}`);
+  build:
+    needs: detect
+    if: needs.detect.outputs.changed == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_STUDIO_URL: http://127.0.0.1:43127
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Kevin-Liu-01/Glyphfield
+          ref: ${{ needs.detect.outputs.sha }}
+          path: vendor
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm version ${{ needs.detect.outputs.version }} --no-git-tag-version
+      - run: npm test
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: vendor/package.json
+      - run: pnpm install --frozen-lockfile
+        working-directory: vendor
+      - run: pnpm typecheck
+        working-directory: vendor
+      - run: pnpm test
+        working-directory: vendor
+      - run: npm run prepare:web
+      - run: pnpm build
+        working-directory: vendor
+      - run: npm run stage:web
+      - run: npm run pack
+      - run: npm run smoke
+      - run: npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
+            build-info.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-test-evidence
+          path: test-results/
+  publish:
+    needs: [detect, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release
+      - uses: actions/github-script@v7
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+          UPSTREAM_SHA: ${{ needs.detect.outputs.sha }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const version = process.env.VERSION;
+            const { data: release } = await github.rest.repos.createRelease({ ...context.repo,
+              tag_name: `v${version}`, target_commitish: context.sha, name: `Glyphfield Windows ${version}`, draft: true,
+              body: `Upstream: ${process.env.UPSTREAM_SHA}\nDesktop: ${context.sha}\n\nWindows x64 installer. Automatic update checks; installation only on request. Validated: upstream tests, typecheck, production build, packaged startup, project persistence and ZIP export.\n\nIndependent Windows distribution; not an official upstream release.` });
+            for (const file of fs.readdirSync('release', { recursive: true })) {
+              const full = path.join('release', file);
+              if (fs.statSync(full).isFile()) await github.rest.repos.uploadReleaseAsset({ ...context.repo, release_id: release.id, name: path.basename(file), data: fs.readFileSync(full) });
+            }
+            await github.rest.repos.updateRelease({ ...context.repo, release_id: release.id, draft: false, make_latest: 'true' });

@@ -1,0 +1,11 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.resolve(__dirname, '..');
+const vendor = path.join(root, 'vendor');
+const target = path.join(root, 'web');
+if (fs.existsSync(target)) throw new Error('web already exists; use a clean build directory.');
+fs.cpSync(path.join(vendor, '.next/standalone'), target, { recursive: true, dereference: true });
+fs.cpSync(path.join(vendor, 'public'), path.join(target, 'public'), { recursive: true });
+fs.cpSync(path.join(vendor, '.next/static'), path.join(target, '.next/static'), { recursive: true });
+for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) fs.copyFileSync(path.join(vendor, file), path.join(target, file));
+if (!fs.existsSync(path.join(target, 'server.js'))) throw new Error('Standalone server missing');

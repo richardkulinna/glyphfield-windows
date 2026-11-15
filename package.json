@@ -1,0 +1,29 @@
+{
+  "name": "glyphfield-windows",
+  "version": "1.0.0",
+  "description": "Independent Windows distribution of Glyphfield",
+  "author": "Richard Kulinna",
+  "license": "MIT",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.cjs",
+    "prepare:web": "node scripts/prepare-web.cjs",
+    "stage:web": "node scripts/stage-web.cjs",
+    "pack": "electron-builder --win --x64 --dir",
+    "dist": "electron-builder --win nsis --x64 --publish never",
+    "smoke": "node tests/smoke.cjs"
+  },
+  "dependencies": { "electron-updater": "6.8.9" },
+  "devDependencies": { "electron": "^42.0.0", "electron-builder": "^26.0.12", "playwright": "^1.62.1" },
+  "build": {
+    "appId": "art.kulinna.glyphfield.windows",
+    "productName": "Glyphfield Windows",
+    "directories": { "output": "dist" },
+    "files": ["desktop/**", "package.json"],
+    "extraResources": [{ "from": "web", "to": "web" }, { "from": "build-info.json", "to": "build-info.json" }],
+    "win": { "target": "nsis", "artifactName": "Glyphfield-Windows-Setup-${version}.${ext}" },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false },
+    "publish": [{ "provider": "github", "owner": "richardkulinna", "repo": "glyphfield-windows" }]
+  }
+}
