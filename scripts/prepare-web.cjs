@@ -10,6 +10,6 @@ const anchor = 'const nextConfig: NextConfig = {';
 if (source.split(anchor).length !== 2 || /output\s*:\s*['"]/.test(source)) {
   throw new Error('Upstream Next configuration changed. Review the desktop adapter before releasing.');
 }
-fs.writeFileSync(file, source.replace(anchor, `${anchor}\n  output: 'standalone',`));
+fs.writeFileSync(file, source.replace(anchor, `${anchor}\n  output: 'standalone',\n  outputFileTracingRoot: process.cwd(),\n  turbopack: { root: process.cwd() },`));
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: vendor, encoding: 'utf8' }).trim();
 fs.writeFileSync(path.join(root, 'build-info.json'), JSON.stringify({ upstream: sha, builtAt: new Date().toISOString() }, null, 2));

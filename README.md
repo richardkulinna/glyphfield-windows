@@ -20,6 +20,8 @@ Unter **App → Update installieren** lädt die App zunächst den bisherigen Ins
 
 **App → Letztes Update zurücknehmen** installiert den gesicherten Vorgänger und stellt dessen Projektdaten wieder her. Neuere Daten bleiben zusätzlich als `before-rollback-…` erhalten. Danach pausieren Update-Prüfungen, bis du manuell wieder nach Updates suchst. Es wird der unmittelbare Vorgänger gesichert; dessen Eignung für jeden individuellen Arbeitsablauf kann kein automatischer Test garantieren.
 
+Falls die Oberfläche nicht startet: Im Windows-Startmenü **Glyphfield Windows - Wiederherstellen** öffnen. Dieser Einstieg startet die Wiederherstellung ohne den Webserver. Auch der Startfehlerdialog bietet die Rücknahme an.
+
 Das App-Menü öffnet Daten und Sicherungen. Externe Dateien und seit der Sicherung noch nicht gespeicherte Änderungen sind nicht Bestandteil der Wiederherstellung. Beim ersten Installieren existiert noch kein Vorgänger. Für das erste Update muss der bisherige Installer auf GitHub erreichbar sein; sonst wird die Installation abgebrochen. Sicherungen werden nicht automatisch gelöscht.
 
 ## Entwicklung und eigene Erweiterungen
@@ -35,3 +37,7 @@ Eigene Funktionen möglichst im Desktop-Bereich oder über die öffentliche `win
 Für lokale Builds Node.js 24, den im Original gepinnten pnpm und Windows x64 verwenden. `npm ci`, Original nach `vendor` klonen, dort `pnpm install --frozen-lockfile`, dann `npm run prepare:web`, in `vendor` `pnpm build`, anschließend `npm run stage:web`, `npm run pack`, `npm run smoke`, `npm run dist`. Die CI führt zusätzlich Originaltests und Typprüfung aus. Build-Metadaten enthalten den exakten Originalcommit.
 
 Original und Windows-Hülle stehen unter MIT. Original-Lizenz und Drittlizenzen werden mit dem Programm ausgeliefert.
+
+### Testanpassungen
+
+Die Originaltests laufen unter Linux, da mehrere Tests POSIX-Dateipfade voraussetzen. Zwei veraltete Testannahmen werden ausschließlich in der temporären Testkopie angepasst: Der Radius-Test erhält ausdrücklich seine erwartete Eingabe von 6 Pixeln; der Moodboard-Test überprüft echte Bildassets und schließt Bildschirmaufnahmen aus, statt ausschließlich auf das inzwischen unvollständige ID-Präfix `library-` zu vertrauen. Keine dieser Anpassungen verändert die ausgelieferte Anwendung. Weitere Testfehler blockieren die Veröffentlichung.
