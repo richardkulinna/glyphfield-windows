@@ -8,6 +8,8 @@ const executablePath = process.env.GLYPHFIELD_TEST_EXE || path.resolve('dist/win
 let instance;
 async function launch() {
   instance = await electron.launch({ executablePath, args: ['--smoke-test'], env: { ...process.env, GLYPHFIELD_TEST_PROFILE: profile }, timeout: 120000 });
+  instance.process().stderr.on('data', (data) => console.error(data.toString()));
+  instance.process().stdout.on('data', (data) => console.log(data.toString()));
   const page = await instance.firstWindow({ timeout: 120000 });
   await page.waitForURL('http://127.0.0.1:43127/studio', { waitUntil: 'load', timeout: 120000 });
   await page.goto('http://127.0.0.1:43127/studio?tool=identity&project=starter');
@@ -40,4 +42,8 @@ async function launch() {
   const labs = await page.evaluate(async () => (await fetch('/api/labs')).json());
   assert.ok(JSON.stringify(labs).includes('identity'));
   console.log('PASS: packaged launch, isolated renderer, brand creation, ZIP export, persisted project after full restart, local API');
-})().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => { if (instance) await instance.close(); });
+})().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {
+  const log = path.join(profile, 'desktop.log');
+  if (fs.existsSync(log)) { fs.copyFileSync(log, 'test-results/desktop.log'); console.log(fs.readFileSync(log, 'utf8')); }
+  if (instance) await instance.close();
+});

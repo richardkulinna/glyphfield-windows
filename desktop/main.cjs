@@ -29,6 +29,7 @@ else {
     await start();
   }).catch(async (error) => {
     log(error.stack);
+    if (smoke) { console.error(error.stack); app.exit(1); return; }
     const result = await dialog.showMessageBox({ type: 'error', message: 'Glyphfield konnte nicht starten', detail: error.message,
       buttons: ['Schließen', 'Letztes Update zurücknehmen'], defaultId: 0, cancelId: 0 });
     if (result.response === 1) await rollback();

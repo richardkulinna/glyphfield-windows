@@ -34,7 +34,7 @@ Das App-Menü öffnet Daten und Sicherungen. Externe Dateien und seit der Sicher
 
 Eigene Funktionen möglichst im Desktop-Bereich oder über die öffentliche `window.glyphfield.studio`-Schnittstelle ergänzen. Unvermeidbare Änderungen am Webkern als überprüfbare Build-Patches in `scripts/` halten und mit Regressionstests absichern. Patches müssen bei unpassendem Kontext abbrechen. Keine automatische Konfliktauflösung, kein Überschreiben eigener Änderungen. Beliebige zukünftige Originaländerungen können dennoch eine manuelle Adapteranpassung erfordern.
 
-Für lokale Builds Node.js 24, den im Original gepinnten pnpm und Windows x64 verwenden. `npm ci`, Original nach `vendor` klonen, dort `pnpm install --frozen-lockfile`, dann `npm run prepare:web`, in `vendor` `pnpm build`, anschließend `npm run stage:web`, `npm run pack`, `npm run smoke`, `npm run dist`. Die CI führt zusätzlich Originaltests und Typprüfung aus. Build-Metadaten enthalten den exakten Originalcommit.
+Für lokale Builds Node.js 24, den im Original gepinnten pnpm und Windows x64 verwenden. `npm ci`, Original nach `vendor` klonen, dort `pnpm install --frozen-lockfile --node-linker=hoisted`, dann `npm run prepare:web`, in `vendor` `npm run build`, anschließend `npm run stage:web`, `npm run pack`, `npm run smoke`, `npm run dist`. `npm run build` bewahrt die für Windows benötigte Abhängigkeitsstruktur. Die CI führt zusätzlich Originaltests und Typprüfung aus. Build-Metadaten enthalten den exakten Originalcommit.
 
 Original und Windows-Hülle stehen unter MIT. Original-Lizenz und Drittlizenzen werden mit dem Programm ausgeliefert.
 
