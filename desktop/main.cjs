@@ -45,6 +45,8 @@ async function start() {
     probe.listen(port, '127.0.0.1', () => probe.close(resolve));
   });
   const web = path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..'), 'web');
+  log(`Packaged Next exists: ${fs.existsSync(path.join(web, 'node_modules/next/package.json'))}`);
+  log(`Packaged modules: ${fs.existsSync(path.join(web, 'node_modules')) ? fs.readdirSync(path.join(web, 'node_modules')).join(', ') : 'missing'}`);
   server = utilityProcess.fork(path.join(web, 'server.js'), [], {
     cwd: web, stdio: 'pipe', env: { ...process.env, NODE_ENV: 'production', HOSTNAME: '127.0.0.1', PORT: String(port), NEXT_TELEMETRY_DISABLED: '1' }
   });

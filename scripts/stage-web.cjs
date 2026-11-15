@@ -12,6 +12,8 @@ fs.cpSync(path.join(vendor, 'public'), path.join(target, 'public'), { recursive:
 fs.cpSync(path.join(vendor, '.next/static'), path.join(target, '.next/static'), { recursive: true });
 for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) fs.copyFileSync(path.join(vendor, file), path.join(target, file));
 if (!fs.existsSync(path.join(target, 'server.js'))) throw new Error('Standalone server missing');
+console.log('Staged Next:', require.resolve('next', { paths: [target] }));
+console.log('Staged modules:', fs.readdirSync(path.join(target, 'node_modules')));
 console.log('Standalone server staged successfully');
 
 function copyTree(source, destination, ancestors = new Set()) {
