@@ -97,7 +97,8 @@ jobs:
       - run: pnpm install --frozen-lockfile --node-linker=hoisted
         working-directory: vendor
       - run: npm run prepare:web
-      - run: pnpm build
+      # pnpm 11 auto-installs on run and would reset the hoisted layout.
+      - run: npm run build
         working-directory: vendor
       - run: npm run stage:web
       - run: npm run pack
