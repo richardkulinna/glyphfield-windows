@@ -7,7 +7,8 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'glyphfield-smoke-'));
 const executablePath = process.env.GLYPHFIELD_TEST_EXE || path.resolve('dist/win-unpacked/Glyphfield Windows.exe');
 let instance;
 async function launch() {
-  instance = await electron.launch({ executablePath, args: ['--smoke-test'], env: { ...process.env, GLYPHFIELD_TEST_PROFILE: profile }, timeout: 120000 });
+  // Simulate unavailable Internet from process startup; only the bundled loopback server is reachable.
+  instance = await electron.launch({ executablePath, args: ['--smoke-test', '--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=127.0.0.1;localhost'], env: { ...process.env, GLYPHFIELD_TEST_PROFILE: profile }, timeout: 120000 });
   instance.process().stderr.on('data', (data) => console.error(data.toString()));
   instance.process().stdout.on('data', (data) => console.log(data.toString()));
   const page = await instance.firstWindow({ timeout: 120000 });
@@ -23,6 +24,10 @@ async function launch() {
 (async () => {
   fs.mkdirSync('test-results', { recursive: true });
   let page = await launch();
+  assert.equal(await page.evaluate(async () => {
+    try { await fetch('https://example.com/', { mode: 'no-cors', signal: AbortSignal.timeout(5000) }); return true; }
+    catch { return false; }
+  }), false, 'Public Internet must be unavailable during the offline test');
   const updatePolicy = await instance.evaluate(({ app }) => {
     const { createRequire } = process.getBuiltinModule('module');
     const updater = createRequire(app.getAppPath() + '/package.json')('electron-updater').autoUpdater;
@@ -47,7 +52,7 @@ async function launch() {
   await page.waitForFunction(() => { try { return JSON.parse(window.glyphfield.studio.readSource()).name === 'Windows persistence check'; } catch { return false; } }, null, { timeout: 60000 });
   const labs = await page.evaluate(async () => (await fetch('/api/labs')).json());
   assert.ok(JSON.stringify(labs).includes('identity'));
-  console.log('PASS: packaged launch, isolated renderer, brand creation, ZIP export, persisted project after full restart, local API');
+  console.log('PASS OFFLINE: packaged launch, isolated renderer, manual update policy, brand creation, ZIP export, persisted project after full restart, local API; public Internet blocked');
 })().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {
   const log = path.join(profile, 'desktop.log');
   if (fs.existsSync(log)) { fs.copyFileSync(log, 'test-results/desktop.log'); console.log(fs.readFileSync(log, 'utf8')); }
