@@ -19,8 +19,8 @@ async function launch() {
 (async () => {
   fs.mkdirSync('test-results', { recursive: true });
   let page = await launch();
-  const updatePolicy = await instance.evaluate(async ({ app }) => {
-    const { createRequire } = await import('node:module');
+  const updatePolicy = await instance.evaluate(({ app }) => {
+    const { createRequire } = process.getBuiltinModule('module');
     const updater = createRequire(app.getAppPath() + '/package.json')('electron-updater').autoUpdater;
     return { autoDownload: updater.autoDownload, autoInstallOnAppQuit: updater.autoInstallOnAppQuit };
   });
