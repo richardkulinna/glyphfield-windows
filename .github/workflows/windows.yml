@@ -94,7 +94,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: vendor/package.json
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --node-linker=hoisted
         working-directory: vendor
       - run: npm run prepare:web
       - run: pnpm build
