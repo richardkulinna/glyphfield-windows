@@ -81,7 +81,8 @@ test('portable start reuses, upgrades, rolls back and leaves other services alon
     await fs.writeFile(path.join(folder, 'build-info.json'), JSON.stringify({version}));
     await fs.writeFile(path.join(folder, 'web/server.js'), version === '1.0.10'
       ? 'throw Error("test broken package");'
-      : `require('node:http').createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ identity:true,version:'${version}',pid:process.pid }));}).listen(Number(process.env.PORT), process.env.HOSTNAME);`);
+      : (version === '1.0.8' ? 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,4200);\n' : '') +
+        `require('node:http').createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ identity:true,version:'${version}',pid:process.pid }));}).listen(Number(process.env.PORT), process.env.HOSTNAME);`);
   }
   const command = (version, flag) => exec(process.execPath, [path.join(dir, version, 'launcher.cjs'), flag], { env, timeout: 15000, windowsHide: true });
   t.after(async () => {

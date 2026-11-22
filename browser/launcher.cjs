@@ -48,7 +48,10 @@ function request(key, action, directory, duringShutdown = false) {
     let data = '';
     let connected = false;
     const disconnected = () => resolve(action === 'stop' ? { stopping: true } : null);
-    socket.setTimeout(3000, () => socket.destroy(new Error('Der laufende Browserstarter antwortet nicht.')));
+    // The controller and the Studio share an event loop. Loading the bundled app
+    // can delay the first status reply, especially just after extracting an update.
+    const timeout = action === 'status' && !duringShutdown ? 90000 : 3000;
+    socket.setTimeout(timeout, () => socket.destroy(new Error('Der laufende Browserstarter antwortet nicht.')));
     socket.on('connect', () => {
       connected = true;
       socket.write(JSON.stringify({ key, action, directory }) + '\n');
