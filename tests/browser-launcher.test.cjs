@@ -30,6 +30,40 @@ test('private backup is readable once by the studio origin', async (t) => {
   try { assert.notEqual((await fetch(url)).status, 200); } catch (e) { assert.equal(e.name, 'TypeError'); }
 });
 
+test('shutdown tolerates an empty reply from an exiting worker and waits for the HTTP port', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'glyphfield-stop-'));
+  const state = path.join(dir, 'Glyphfield Browser');
+  const id = require('node:crypto').createHash('sha256').update(state.toLowerCase()).digest('hex').slice(0, 22);
+  const pipePath = process.platform === 'win32' ? '\\\\.\\pipe\\glyphfield-browser-' + id : path.join(os.tmpdir(), 'glyphfield-' + id + '.sock');
+  const service = net.createServer();
+  await new Promise(resolve => service.listen(0, '127.0.0.1', resolve));
+  const port = service.address().port;
+  const actions = [];
+  const pipe = net.createServer(peer => {
+    peer.once('data', data => {
+      const { action } = JSON.parse(data.toString());
+      actions.push(action);
+      if (action === 'status') {
+        pipe.close();
+        setTimeout(() => service.close(), 250);
+      }
+      peer.end();
+    });
+  });
+  t.after(async () => {
+    if (pipe.listening) await new Promise(resolve => pipe.close(resolve));
+    if (service.listening) await new Promise(resolve => service.close(resolve));
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  await new Promise(resolve => pipe.listen(pipePath, resolve));
+  await exec(process.execPath, [path.join(__dirname, '../browser/launcher.cjs'), '--stop'], {
+    env: { ...process.env, LOCALAPPDATA: dir, NODE_ENV: 'test', GLYPHFIELD_BROWSER_TEST_PORT: String(port) },
+    timeout: 10000, windowsHide: true,
+  });
+  assert.deepEqual(actions, ['stop', 'status']);
+  assert.equal(service.listening, false);
+});
+
 test('portable start reuses, upgrades, rolls back and leaves other services alone', { timeout: 60000 }, async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'glyphfield-launcher-'));
   const probe = net.createServer();

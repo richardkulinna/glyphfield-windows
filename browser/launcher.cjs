@@ -42,19 +42,26 @@ async function userKey() {
 }
 
 // The control protocol stays off HTTP. Only the owner of the local key can stop this worker.
-function request(key, action, directory) {
+function request(key, action, directory, duringShutdown = false) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(socketPath);
     let data = '';
+    let connected = false;
+    const disconnected = () => resolve(action === 'stop' ? { stopping: true } : null);
     socket.setTimeout(3000, () => socket.destroy(new Error('Der laufende Browserstarter antwortet nicht.')));
-    socket.on('connect', () => socket.write(JSON.stringify({ key, action, directory }) + '\n'));
+    socket.on('connect', () => {
+      connected = true;
+      socket.write(JSON.stringify({ key, action, directory }) + '\n');
+    });
     socket.setEncoding('utf8');
     socket.on('data', chunk => { data += chunk; if (data.length > 16384) socket.destroy(new Error('Ungültige Antwort.')); });
     socket.on('error', error => {
       if (error.code === 'ENOENT' || error.code === 'ECONNREFUSED') resolve(null);
+      else if (duringShutdown && connected && !data && ['ECONNRESET', 'EPIPE'].includes(error.code)) disconnected();
       else reject(error);
     });
     socket.on('end', () => {
+      if (duringShutdown && !data) { disconnected(); return; }
       try {
         const reply = JSON.parse(data);
         if (reply.error) reject(Error(reply.error)); else resolve(reply);
@@ -112,8 +119,8 @@ async function start(directory, key) {
 }
 
 async function stop(key) {
-  const reply = await request(key, 'stop');
-  if (reply && !await waitFor(async () => !(await request(key, 'status')) && await freePort(), 10000)) {
+  const reply = await request(key, 'stop', undefined, true);
+  if (reply && !await waitFor(async () => !(await request(key, 'status', undefined, true)) && await freePort(), 10000)) {
     throw Error('Der Browserdienst ist noch in Benutzung. Bitte kurz warten und den Starter nochmals öffnen.');
   }
 }
@@ -161,7 +168,9 @@ async function serve(key) {
         if (input.key !== key) throw Error('Ungültiger Starterschlüssel.');
         if (input.action === 'status') socket.end(JSON.stringify({ root, version }));
         else if (input.action === 'stop') {
-          socket.end('{"stopping":true}', () => process.exit(0));
+          // Stop accepting requests, then wait for existing peers to receive their replies.
+          if (controller.listening) controller.close(() => process.exit(0));
+          socket.end('{"stopping":true}');
         } else if (input.action === 'import' && typeof input.directory === 'string' && path.isAbsolute(input.directory)) {
           socket.end(JSON.stringify({ url: await servePrivateBackup(input.directory) }));
         } else throw Error('Unbekannte Starteranfrage.');

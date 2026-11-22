@@ -67,6 +67,21 @@ function projectUrl(id){return '/studio?tool=identity&project='+encodeURICompone
 function go(id){location.replace(projectUrl(id));}
 function remember(id){try{localStorage.setItem(selected.marker,id);}catch{}}
 function mapped(key,from,to){return key.replace(':'+from+':',':'+to+':');}
+function copyDesignSource(source, from, to) {
+  if (typeof source !== 'string' || !source.includes(from)) return source;
+  let parsed;
+  try { parsed = JSON.parse(source); } catch { return source; }
+  function reference(value) {
+    return value === from || value.startsWith(from + ':') ? to + value.slice(from.length) : value;
+  }
+  function copy(value) {
+    if (typeof value === 'string') return reference(value);
+    if (Array.isArray(value)) return value.map(copy);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [reference(key), copy(child)]));
+  }
+  return JSON.stringify(copy(parsed));
+}
 async function restore(copy){
   if(busy)return;busy=true;choices.hidden=true;file.disabled=true;
   try{
@@ -80,10 +95,14 @@ async function restore(copy){
       const added=[],written=[];
       try{
         for(const group of data.stores){if(!group.records.length)continue;
-          const rows=group.store==='designs'&&target!==origin?group.records.map(row=>{const workspaceKey=mapped(row.workspaceKey,origin,target);return {...row,workspaceKey,key:workspaceKey+':'+row.design.id}}):group.records;
+          const rows=group.store==='designs'&&target!==origin?group.records.map(row=>{
+            const workspaceKey=mapped(row.workspaceKey,origin,target);
+            const design={...row.design,source:copyDesignSource(row.design.source,origin,target)};
+            return {...row,design,workspaceKey,key:workspaceKey+':'+design.id};
+          }):group.records;
           const keys=await addRows(group,rows);added.push([group,keys]);
         }
-        for(const [from,value] of Object.entries(data.storage)){const key=mapped(from,origin,target),prior=localStorage.getItem(key);
+        for(const [from,stored] of Object.entries(data.storage)){const key=mapped(from,origin,target),prior=localStorage.getItem(key),value=copy?copyDesignSource(stored,origin,target):stored;
           if(prior===value)continue;if(prior!==null)fail('Es existiert eine abweichende Entwurfsfassung. Bitte den bestehenden Stand sichern.');
           localStorage.setItem(key,value);written.push(key);}
         const latest=registry();if(latest.some(i=>i.id===target))fail('Das Projekt wurde inzwischen in einem anderen Tab geöffnet. Bitte erneut versuchen.');
