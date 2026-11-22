@@ -1,6 +1,6 @@
 # Glyphfield Windows
 
-Unabhängige Windows-Ausgabe von [Glyphfield](https://github.com/Kevin-Liu-01/Glyphfield), entwickelt von Kevin Liu. Die originale Oberfläche und der originale Anwendungscode bleiben erhalten. Dieses Repository enthält ausschließlich die Windows-Hülle, Tests und den Update-Prozess.
+Unabhängige Windows-Ausgabe von [Glyphfield](https://github.com/Kevin-Liu-01/Glyphfield), entwickelt von Kevin Liu. Der Windows-Build kombiniert das Original mit dem hier gepflegten Studio-Editor für Marken, Brandbooks und Moodboards.
 
 ## Installation
 
@@ -26,6 +26,7 @@ Das App-Menü öffnet Daten und Sicherungen. Externe Dateien und seit der Sicher
 
 ## Entwicklung und eigene Erweiterungen
 
+- `studio/src/`: bearbeitbarer Studio-Quellcode des Windows-Forks. Die Einträge in `studio/upstream-files.json` prüfen vor Tests und Build, ob sich eine übernommene Originaldatei geändert hat.
 - `desktop/`: Electron-Fenster, lokale Serverlaufzeit, Update- und Wiederherstellungsfunktionen.
 - `scripts/`: überprüfte Anpassungen ausschließlich in der temporären Build-Kopie.
 - `tests/`: Desktop-Vertrag und Datenpersistenz.

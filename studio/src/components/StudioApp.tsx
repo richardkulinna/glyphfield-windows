@@ -1,0 +1,2194 @@
+'use client';
+
+import Image from 'next/image';
+import Link from 'next/link';
+import dynamic from 'next/dynamic';
+import {
+  memo,
+  startTransition,
+  Suspense,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
+import { T, useGT } from 'gt-next';
+import {
+  BookOpen,
+  BriefcaseBusiness,
+  Check,
+  Copy,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Film,
+  FilePenLine,
+  Folder,
+  Grid3X3,
+  LayoutGrid,
+  Monitor,
+  Moon,
+  Palette,
+  PanelTopClose,
+  Plus,
+  Rocket,
+  Save,
+  Search,
+  Settings2,
+  Sparkles,
+  Sticker,
+  Sun,
+  Trash2,
+  X,
+} from '@/components/ui/SolidIcons';
+
+import { useAppTheme } from '@/components/AppThemeProvider';
+import BrandFontFaces from '@/components/BrandFontFaces';
+import GitHubStarButton from '@/components/GitHubStarButton';
+import SidebarDitherPanel from '@/components/SidebarDitherPanel';
+import StudioCommandPalette from '@/components/StudioCommandPalette';
+import StudioConfirmDialog from '@/components/StudioConfirmDialog';
+import StudioCreateProjectMenu from '@/components/StudioCreateProjectMenu';
+import StudioActionMenu from '@/components/ui/StudioActionMenu';
+import { StudioExportProgressProvider } from '@/components/StudioExportProgress';
+import { STUDIO_TOOL_ICONS } from '@/components/StudioToolIcons';
+import ThemeAwareBrandMark from '@/components/ThemeAwareBrandMark';
+import { Button } from '@/components/ui/Button';
+import StudioErrorNotice from '@/components/ui/StudioErrorNotice';
+import { useCommittedRef } from '@/hooks/useCommittedRef';
+import StudioCheckbox from '@/components/ui/StudioCheckbox';
+import ColorControl from '@/components/ui/ColorControl';
+import StudioContextMenu, {
+  contextMenuPositionFromElement,
+  contextMenuPositionFromEvent,
+  type StudioContextMenuPosition,
+} from '@/components/ui/StudioContextMenu';
+import StudioSelect from '@/components/ui/StudioSelect';
+import { useMountEffect } from '@/hooks/useMountEffect';
+import { useDismissibleMenu } from '@/hooks/useDismissibleMenu';
+import { useExitGhost } from '@/hooks/useExitGhost';
+import { DRAFT_STORAGE_STATUS, failedDraftCount, retryFailedDrafts, usePersistentState } from '@/hooks/usePersistentState';
+import { useProjectTabInteraction } from '@/hooks/useProjectTabInteraction';
+import {
+  GT_BRAND_IDENTITY,
+  hydrateBrandIdentities,
+  inspectStoredWebFonts,
+  renameBrandIdentity,
+  STARTER_BRAND_IDENTITY,
+  type BrandIdentity,
+} from '@/lib/brandIdentity';
+import { colorContrastRatio, hexToHslChannels, normalizeHexOrFallback } from '@/lib/color';
+import { PRODUCT_BRAND } from '@/lib/productBrand';
+import { registerBrandProjectHost } from '@/lib/brandProjectHost';
+import {
+  filterStudioTools,
+  getProjectTabDensity,
+  getProjectTabScrollCues,
+  reorderProjectTabs,
+  STUDIO_CATEGORIES,
+  STUDIO_TOOLS,
+  type ProjectTabPlacement,
+  type StudioTool,
+  type StudioToolId,
+} from '@/lib/studioCatalog';
+
+const loadAnimationStudio = () => import('@/components/AnimationStudio');
+const loadBrandSettingsStudio = () => import('@/components/BrandSettingsStudio');
+const loadLottieStudio = () => import('@/components/LottieStudio');
+const loadShaderLabStudio = () => import('@/components/ShaderLabStudio');
+const loadStudioToolWorkspace = () => import('@/components/StudioToolWorkspace');
+
+// Editors carry no loading fallback of their own. They suspend to the workspace
+// boundary, and tool and project switches render in transitions, so React keeps
+// the current editor on screen until the next one is ready instead of flashing a
+// fallback (React also holds a revealed fallback for at least 300 ms).
+const AnimationStudio = dynamic(loadAnimationStudio);
+const BrandSettingsStudio = dynamic(loadBrandSettingsStudio);
+// Retained editors stay mounted behind `inert`. Memo keeps the hidden ones from
+// re-rendering with the Studio shell; AnimationStudio memoizes its own export.
+const LottieStudio = memo(dynamic(loadLottieStudio));
+const ShaderLabStudio = memo(dynamic(loadShaderLabStudio));
+const StudioToolWorkspace = dynamic(loadStudioToolWorkspace);
+
+async function loadStudioToolModule(toolId: StudioToolId): Promise<unknown> {
+  if (toolId === 'animation') return loadAnimationStudio();
+  if (toolId === 'identity') return loadBrandSettingsStudio();
+  if (toolId === 'lottie') return loadLottieStudio();
+  if (toolId === 'material') return loadShaderLabStudio();
+  const { preloadToolModule } = await loadStudioToolWorkspace();
+  return preloadToolModule(toolId);
+}
+
+async function preloadStudioTool(toolId: StudioToolId) {
+  if (toolId === 'lottie') {
+    const { preloadLottieRuntime } = await loadLottieStudio();
+    return preloadLottieRuntime();
+  }
+  return loadStudioToolModule(toolId);
+}
+
+const TOOL_PREFETCH_DELAY_MS = 1_200;
+
+/**
+ * Loads every tool module, one per idle period, once the first tool has painted,
+ * so a first visit to a tool does not wait on the network. Skipped when the
+ * browser asks to save data.
+ */
+function scheduleStudioToolPrefetch(): () => void {
+  const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+  if (connection?.saveData) return () => {};
+  const queue = STUDIO_TOOLS.map(({ id }) => id);
+  let cancelled = false;
+  let timer = 0;
+  let idleHandle = 0;
+  const next = () => {
+    const toolId = queue.shift();
+    if (cancelled || !toolId) return;
+    const load = () => {
+      void loadStudioToolModule(toolId).catch(() => undefined).finally(next);
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      idleHandle = window.requestIdleCallback(load, { timeout: 4_000 });
+    } else {
+      timer = window.setTimeout(load, 120);
+    }
+  };
+  timer = window.setTimeout(next, TOOL_PREFETCH_DELAY_MS);
+  return () => {
+    cancelled = true;
+    window.clearTimeout(timer);
+    if (idleHandle) window.cancelIdleCallback?.(idleHandle);
+  };
+}
+
+/** Placeholder with the tool shell's geometry: toolbar, inspector column and canvas. */
+function StudioWorkspaceSkeleton() {
+  return (
+    <div aria-busy='true' aria-label='Loading Studio tool' className='studio-workspace-loading studio-workspace-skeleton'>
+      <div className='studio-workspace-skeleton-toolbar'><i /><i /></div>
+      <div className='studio-workspace-skeleton-panel'><i /><i /><i /></div>
+      <div className='studio-workspace-skeleton-canvas'><span /></div>
+    </div>
+  );
+}
+
+// Matches the layer crossfade in globals.css (.studio-workspace-layer).
+const STUDIO_LAYER_FADE_MS = 160;
+
+const PROJECTS_STORAGE_KEY = 'glyphfield-projects-v1';
+const ACTIVE_PROJECT_STORAGE_KEY = 'glyphfield-active-project-v1';
+const ACTIVE_TOOL_STORAGE_KEY = 'glyphfield-active-tool-v2';
+const ACTIVE_FOLDER_STORAGE_KEY = 'glyphfield-active-folder-v1';
+const OPEN_TABS_STORAGE_KEY = 'glyphfield-open-tabs-v1';
+const APPEARANCE_STORAGE_KEY = 'glyphfield-appearance-v1';
+const MAX_RETAINED_PROJECT_WORKSPACES = 3;
+const LEGACY_PROJECTS_STORAGE_KEYS = [
+  'gt-studio-identities-v2',
+  'gt-studio-identities-v1',
+] as const;
+const LEGACY_SURFACE_TOOL_MODES = {
+  backgrounds: 'background',
+  logo: 'logo',
+} as const;
+type ProjectFolderId = 'all' | 'templates' | 'local' | 'examples';
+
+/** The tool the Studio will open, read without side effects (see loadStudioLaunchState). */
+function launchToolHint(): StudioToolId {
+  const candidates = [
+    new URLSearchParams(window.location.search).get('tool'),
+    window.localStorage.getItem(ACTIVE_TOOL_STORAGE_KEY),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (candidate === 'logo-shader' || candidate === 'surface' || candidate in LEGACY_SURFACE_TOOL_MODES) return 'material';
+    const tool = STUDIO_TOOLS.find(({ id }) => id === candidate);
+    if (tool) return tool.id;
+  }
+  return 'identity';
+}
+
+// Fetch the first editor while the page hydrates rather than after the launch
+// effect runs; this module also loads early from the landing page's Studio link.
+if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'test') {
+  try {
+    void loadStudioToolModule(launchToolHint()).catch(() => undefined);
+  } catch {
+    // Storage can be unavailable; the editor then loads when it first renders.
+  }
+}
+
+type ProjectTabMenuState = {
+  identityId: string;
+  position: StudioContextMenuPosition;
+};
+
+type StudioAppearance = {
+  accent: 'neutral' | 'violet' | 'teal' | 'lime' | 'custom';
+  /** The custom accent, used when `accent` is `custom`. */
+  accentColor: string;
+  canvas: 'dots' | 'grid' | 'plain';
+  contrast: 'standard' | 'high';
+  corners: 'rounded' | 'square';
+  density: 'compact' | 'comfortable';
+  font: 'helvetica' | 'be-vietnam-pro' | 'schibsted-grotesk' | 'rethink-sans';
+  motion: 'full' | 'reduced';
+  theme: 'light' | 'dark' | 'system';
+  tooltips: 'on' | 'off';
+};
+
+type StoredStudioAppearance = Omit<StudioAppearance, 'theme'>;
+
+const DEFAULT_APPEARANCE: StoredStudioAppearance = {
+  accent: 'neutral',
+  accentColor: '#6B45EE',
+  canvas: 'dots',
+  contrast: 'standard',
+  corners: 'rounded',
+  density: 'comfortable',
+  font: 'helvetica',
+  motion: 'full',
+  tooltips: 'on',
+};
+
+/** A custom accent sets the same channels the preset accents do, with readable text on top. */
+function customAccentStyle(appearance: StudioAppearance): CSSProperties | undefined {
+  if (appearance.accent !== 'custom') return undefined;
+  const channels = hexToHslChannels(appearance.accentColor);
+  const foreground = colorContrastRatio(appearance.accentColor, '#FFFFFF') >= colorContrastRatio(appearance.accentColor, '#111111') ? '0 0% 100%' : '0 0% 7%';
+  return { '--emphasis': channels, '--primary': channels, '--primary-foreground': foreground, '--ring': channels } as CSSProperties;
+}
+
+type ResolvedTheme = 'light' | 'dark';
+
+const PROJECT_FOLDERS: readonly { icon: typeof Grid3X3; id: ProjectFolderId; label: string }[] = [
+  { icon: Grid3X3, id: 'all', label: 'All projects' },
+  { icon: LayoutGrid, id: 'templates', label: 'Templates' },
+  { icon: BriefcaseBusiness, id: 'local', label: 'My brands' },
+  { icon: Sparkles, id: 'examples', label: 'Examples' },
+];
+
+function normalizeStudioFont(value: unknown): StudioAppearance['font'] {
+  if (value === 'be-vietnam-pro' || value === 'schibsted-grotesk' || value === 'rethink-sans') {
+    return value;
+  }
+  return 'helvetica';
+}
+
+function identityBelongsToFolder(identity: BrandIdentity, folderId: ProjectFolderId): boolean {
+  if (folderId === 'templates') return identity.kind === 'template';
+  if (folderId === 'local') return identity.kind === 'custom';
+  if (folderId === 'examples') return identity.kind === 'example';
+  return true;
+}
+
+function isProjectFolderId(value: string): value is ProjectFolderId {
+  return PROJECT_FOLDERS.some(({ id }) => id === value);
+}
+
+function readStoredIdentities(): BrandIdentity[] {
+  const stored = window.localStorage.getItem(PROJECTS_STORAGE_KEY)
+    ?? LEGACY_PROJECTS_STORAGE_KEYS
+      .map((key) => window.localStorage.getItem(key))
+      .find((value) => value !== null);
+  return hydrateBrandIdentities(stored ? JSON.parse(stored) : null);
+}
+
+function resolveStoredStudioTool(storedTool: string | null, identityId: string): StudioToolId | null {
+  if (storedTool === 'logo-shader' || storedTool === 'surface') return 'material';
+  if (storedTool && storedTool in LEGACY_SURFACE_TOOL_MODES) {
+    window.localStorage.setItem(
+      `glyphfield-draft-v1:${identityId}:surface:mode-v2`,
+      JSON.stringify(LEGACY_SURFACE_TOOL_MODES[storedTool as keyof typeof LEGACY_SURFACE_TOOL_MODES])
+    );
+    return 'material';
+  }
+  return storedTool && STUDIO_TOOLS.some(({ id }) => id === storedTool)
+    ? storedTool as StudioToolId
+    : null;
+}
+
+function resolveLaunchFolder(
+  activeIdentity: BrandIdentity,
+  requestedFolderId: ProjectFolderId | null,
+  requestedProject: BrandIdentity | undefined,
+  storedFolder: string | null
+): { folderId: ProjectFolderId; persist: boolean } {
+  if (requestedFolderId && identityBelongsToFolder(activeIdentity, requestedFolderId)) {
+    return { folderId: requestedFolderId, persist: true };
+  }
+  if (requestedProject?.kind === 'example') return { folderId: 'examples', persist: true };
+  if (
+    storedFolder
+    && isProjectFolderId(storedFolder)
+    && identityBelongsToFolder(activeIdentity, storedFolder)
+  ) return { folderId: storedFolder, persist: false };
+  return { folderId: 'all', persist: false };
+}
+
+function loadStudioLaunchState() {
+  const identities = readStoredIdentities();
+  const parameters = new URLSearchParams(window.location.search);
+  const requestedTool = parameters.get('tool');
+  const requestedProjectId = parameters.get('project');
+  const requestedFolderValue = parameters.get('folder');
+  const requestedFolderId = requestedFolderValue && isProjectFolderId(requestedFolderValue)
+    ? requestedFolderValue
+    : null;
+  const requestedProject = identities.find(({ id }) => id === requestedProjectId);
+  const requestedFolderProject = requestedFolderId
+    ? identities.find((identity) => identityBelongsToFolder(identity, requestedFolderId))
+    : undefined;
+  const storedIdentityId = window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY)
+    ?? window.localStorage.getItem('gt-studio-active-identity-v2');
+  const activeIdentity = requestedProject
+    ?? requestedFolderProject
+    ?? identities.find(({ id }) => id === storedIdentityId)
+    ?? identities[0]
+    ?? STARTER_BRAND_IDENTITY;
+  return {
+    activeIdentity,
+    folder: resolveLaunchFolder(
+      activeIdentity,
+      requestedFolderId,
+      requestedProject,
+      window.localStorage.getItem(ACTIVE_FOLDER_STORAGE_KEY)
+    ),
+    hasStoredTabs: window.localStorage.getItem(OPEN_TABS_STORAGE_KEY) !== null,
+    identities,
+    requestedSelection: Boolean(requestedProject || requestedFolderProject),
+    toolId: resolveStoredStudioTool(requestedTool, activeIdentity.id)
+      ?? resolveStoredStudioTool(
+        window.localStorage.getItem(ACTIVE_TOOL_STORAGE_KEY),
+        activeIdentity.id
+      ),
+  };
+}
+
+function ProjectFolderMenu({
+  activeIdentityId,
+  activeFolderId,
+  folderCounts,
+  identities,
+  onOpenProject,
+  onSelect,
+  onWarmProject,
+  openIdentityIds,
+}: {
+  activeIdentityId: string;
+  activeFolderId: ProjectFolderId;
+  folderCounts: Record<ProjectFolderId, number>;
+  identities: BrandIdentity[];
+  onOpenProject: (identityId: string) => void;
+  onSelect: (folderId: ProjectFolderId) => void;
+  onWarmProject: (identityId: string) => void;
+  openIdentityIds: string[];
+}) {
+  const gt = useGT();
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  useExitGhost(popoverRef, open);
+  const activeFolder = PROJECT_FOLDERS.find(({ id }) => id === activeFolderId)!;
+  const ActiveFolderIcon = activeFolder.icon;
+  const folderProjects = identities.filter((identity) =>
+    identityBelongsToFolder(identity, activeFolderId)
+  );
+  const openIdentityIdSet = useMemo(() => new Set(openIdentityIds), [openIdentityIds]);
+
+  useDismissibleMenu(menuRef, () => setOpen(false), '[data-radix-popper-content-wrapper]');
+
+  return (
+    <div className='project-folder-menu' ref={menuRef}>
+      <Button
+        aria-expanded={open}
+        aria-haspopup='menu'
+        className='project-folder-trigger'
+        onClick={() => setOpen((current) => !current)}
+        size='toolbar'
+        type='button'
+        variant='outline'
+      >
+        <ActiveFolderIcon aria-hidden='true' />
+        <span>{gt('Projects')}</span>
+        <span className='project-folder-count'>{folderCounts[activeFolder.id]}</span>
+        <ChevronDown aria-hidden='true' className={open ? 'rotate-180' : ''} />
+      </Button>
+      {open ? (
+        <div className='project-folder-popover' ref={popoverRef} role='menu'>
+          <div className='project-folder-popover-heading'>
+            <span><T>Projects</T></span>
+            <span>{folderCounts.all} <T>total</T></span>
+          </div>
+          {PROJECT_FOLDERS.map((folder) => {
+            const FolderIcon = folder.icon;
+            return (
+              <button
+                aria-checked={activeFolderId === folder.id}
+                className='project-folder-option'
+                key={folder.id}
+                onClick={() => {
+                  onSelect(folder.id);
+                }}
+                role='menuitemradio'
+                type='button'
+              >
+                <span className='project-folder-option-icon'>
+                  <FolderIcon aria-hidden='true' />
+                </span>
+                <span>
+                  <strong>{gt(folder.label)}</strong>
+                  <small>{folderCounts[folder.id]} {folderCounts[folder.id] === 1 ? gt('brand') : gt('brands')}</small>
+                </span>
+                {activeFolderId === folder.id ? <Check aria-hidden='true' /> : null}
+              </button>
+            );
+          })}
+          <div className='project-folder-popover-heading project-folder-projects-heading'>
+            <span><T>Projects</T></span>
+            <span><T>Click to open</T></span>
+          </div>
+          <div className='project-folder-projects'>
+            {folderProjects.map((identity) => {
+              const isOpen = openIdentityIdSet.has(identity.id);
+              const isActive = identity.id === activeIdentityId;
+
+              return (
+                <button
+                  aria-current={isActive ? 'page' : undefined}
+                  className='project-folder-project'
+                  key={identity.id}
+                  onClick={() => {
+                    onOpenProject(identity.id);
+                    setOpen(false);
+                  }}
+                  onFocus={() => onWarmProject(identity.id)}
+                  onPointerEnter={() => onWarmProject(identity.id)}
+                  role='menuitem'
+                  type='button'
+                >
+                  <span className='project-folder-project-mark' aria-hidden='true'>
+                    <ThemeAwareBrandMark className='size-[19px]' identity={identity} />
+                  </span>
+                  <span>
+                    <strong>{identity.name}</strong>
+                    <small>{identity.kind === 'custom' ? <T>My brand</T> : gt(identity.kind)}</small>
+                  </span>
+                  <span className='project-folder-project-state' title={isOpen ? gt('Tab open') : gt('Open tab')}>
+                    {isOpen ? <Check aria-hidden='true' /> : <Plus aria-hidden='true' />}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AppearanceMenu({
+  appearance,
+  onChange,
+}: {
+  appearance: StudioAppearance;
+  onChange: (patch: Partial<StudioAppearance>) => void;
+}) {
+  const gt = useGT();
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  useExitGhost(popoverRef, open);
+
+  useDismissibleMenu(menuRef, () => setOpen(false), '[data-radix-popper-content-wrapper]');
+
+  return (
+    <div className='appearance-menu' ref={menuRef}>
+      <Button
+        aria-expanded={open}
+        aria-label={gt('Visual customization')}
+        onClick={() => setOpen((current) => !current)}
+        size='icon-sm'
+        title={gt('Visual customization')}
+        type='button'
+        variant='outline'
+      >
+        <Settings2 aria-hidden='true' />
+      </Button>
+      {open ? (
+        <div aria-label={gt('Visual customization')} className='appearance-popover' ref={popoverRef} role='region'>
+          <div className='appearance-popover-header'>
+            <span>
+              <Settings2 aria-hidden='true' />
+              <T>Visual settings</T>
+            </span>
+            <button onClick={() => setOpen(false)} type='button'>
+              <X aria-hidden='true' />
+              <span className='sr-only'><T>Close</T></span>
+            </button>
+          </div>
+
+          <section className='appearance-section'>
+            <div>
+              <strong><T>Theme</T></strong>
+              <small><T>Shared across the landing page, Studio, and docs</T></small>
+            </div>
+            <div className='appearance-segments appearance-segments--three'>
+              {(['light', 'dark', 'system'] as const).map((theme) => (
+                <button
+                  aria-pressed={appearance.theme === theme}
+                  key={theme}
+                  onClick={() => onChange({ theme })}
+                  type='button'
+                >
+                  {theme === 'light' ? (
+                    <Sun aria-hidden='true' />
+                  ) : theme === 'dark' ? (
+                    <Moon aria-hidden='true' />
+                  ) : (
+                    <Monitor aria-hidden='true' />
+                  )}
+                  {theme === 'light' ? <T>Light</T> : theme === 'dark' ? <T>Dark</T> : <T>Auto</T>}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className='appearance-section'>
+            <div>
+              <strong><T>Accent</T></strong>
+              <small><T>Selection and focus color</T></small>
+            </div>
+            <div className='appearance-swatches' role='group' aria-label={gt('Accent color')}>
+              {(['neutral', 'violet', 'teal', 'lime'] as const).map((accent) => (
+                <button
+                  aria-label={gt('{accent} accent', { accent })}
+                  aria-pressed={appearance.accent === accent}
+                  className={`appearance-swatch appearance-swatch--${accent}`}
+                  key={accent}
+                  onClick={() => onChange({ accent })}
+                  type='button'
+                >
+                  {appearance.accent === accent ? <Check aria-hidden='true' /> : null}
+                </button>
+              ))}
+              <button
+                aria-label={gt('Custom accent')}
+                aria-pressed={appearance.accent === 'custom'}
+                className='appearance-swatch appearance-swatch--custom'
+                onClick={() => onChange({ accent: 'custom' })}
+                style={appearance.accent === 'custom' ? { background: appearance.accentColor } : undefined}
+                type='button'
+              >
+                {appearance.accent === 'custom' ? <Check aria-hidden='true' /> : null}
+              </button>
+            </div>
+            {appearance.accent === 'custom' ? (
+              <div className='appearance-custom-accent'>
+                <ColorControl
+                  ariaLabel={gt('Custom accent color')}
+                  compact
+                  label={<T>Custom accent</T>}
+                  onChange={(accentColor) => onChange({ accent: 'custom', accentColor })}
+                  value={appearance.accentColor}
+                />
+              </div>
+            ) : null}
+          </section>
+
+          <section className='appearance-section'>
+            <div>
+              <strong><T>Canvas</T></strong>
+              <small><T>Workspace construction field</T></small>
+            </div>
+            <div className='appearance-segments appearance-segments--three'>
+              {(['dots', 'grid', 'plain'] as const).map((canvas) => (
+                <button
+                  aria-pressed={appearance.canvas === canvas}
+                  key={canvas}
+                  onClick={() => onChange({ canvas })}
+                  type='button'
+                >
+                  {gt(canvas)}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className='appearance-section'>
+            <div>
+              <strong><T>Corners</T></strong>
+              <small><T>Shape of Studio controls and panels</T></small>
+            </div>
+            <div className='appearance-segments'>
+              {(['rounded', 'square'] as const).map((corners) => (
+                <button
+                  aria-pressed={appearance.corners === corners}
+                  key={corners}
+                  onClick={() => onChange({ corners })}
+                  type='button'
+                >
+                  {corners === 'rounded' ? <T>Rounded</T> : <T>Square</T>}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className='appearance-section'>
+            <div>
+              <strong><T>Studio font</T></strong>
+              <small><T>Interface typography</T></small>
+            </div>
+            <StudioSelect
+              ariaLabel={gt('Studio font')}
+              onValueChange={(font) =>
+                onChange({ font: font as StudioAppearance['font'] })
+              }
+              options={[
+                { label: 'Helvetica Neue', value: 'helvetica' },
+                { label: 'Be Vietnam Pro', value: 'be-vietnam-pro' },
+                { label: 'Schibsted Grotesk', value: 'schibsted-grotesk' },
+                { label: 'Rethink Sans', value: 'rethink-sans' },
+              ]}
+              value={appearance.font}
+            />
+          </section>
+
+          <section className='appearance-toggles'>
+            <label>
+              <span>
+                <strong><T>Compact UI</T></strong>
+                <small><T>Tighter navigation</T></small>
+              </span>
+              <StudioCheckbox
+                checked={appearance.density === 'compact'}
+                onChange={(event) => onChange({ density: event.target.checked ? 'compact' : 'comfortable' })}
+                variant='switch'
+              />
+            </label>
+            <label>
+              <span>
+                <strong><T>Reduce motion</T></strong>
+                <small><T>Pause decorative effects</T></small>
+              </span>
+              <StudioCheckbox
+                checked={appearance.motion === 'reduced'}
+                onChange={(event) => onChange({ motion: event.target.checked ? 'reduced' : 'full' })}
+                variant='switch'
+              />
+            </label>
+            <label>
+              <span>
+                <strong><T>Tooltips</T></strong>
+                <small><T>Name controls on hover and focus</T></small>
+              </span>
+              <StudioCheckbox
+                checked={appearance.tooltips !== 'off'}
+                onChange={(event) => onChange({ tooltips: event.target.checked ? 'on' : 'off' })}
+                variant='switch'
+              />
+            </label>
+            <label>
+              <span>
+                <strong><T>High contrast</T></strong>
+                <small><T>Stronger borders and secondary text</T></small>
+              </span>
+              <StudioCheckbox
+                checked={appearance.contrast === 'high'}
+                onChange={(event) => onChange({ contrast: event.target.checked ? 'high' : 'standard' })}
+                variant='switch'
+              />
+            </label>
+          </section>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProjectTabContextMenu({
+  activeIdentityId,
+  identity,
+  menu,
+  onClose,
+  onCloseOthers,
+  onCloseTab,
+  onDuplicate,
+  onMove,
+  onOpen,
+  onRename,
+  openCount,
+  tabCount,
+  tabIndex,
+}: {
+  activeIdentityId: string;
+  identity: BrandIdentity | null;
+  menu: ProjectTabMenuState | null;
+  onClose: () => void;
+  onCloseOthers: (identityId: string) => void;
+  onCloseTab: (identityId: string) => void;
+  onDuplicate: (identityId: string) => void;
+  onMove: (identityId: string, direction: -1 | 1) => void;
+  onOpen: (identityId: string) => void;
+  onRename: (identityId: string) => void;
+  openCount: number;
+  tabCount: number;
+  tabIndex: number;
+}) {
+  const gt = useGT();
+  return (
+    <StudioContextMenu
+      detail={identity ? (identity.kind === 'custom' ? gt('My brand') : gt(identity.kind)) : undefined}
+      label={identity?.name ?? gt('Project')}
+      onClose={onClose}
+      position={menu?.position ?? null}
+      sections={identity ? [
+        {
+          items: [
+            {
+              checked: identity.id === activeIdentityId,
+              icon: <ThemeAwareBrandMark className='size-[14px]' identity={identity} />,
+              id: 'open-project',
+              label: gt('Open project'),
+              onSelect: () => onOpen(identity.id),
+            },
+            {
+              icon: <FilePenLine aria-hidden='true' />,
+              id: 'rename-project',
+              label: gt('Rename project'),
+              onSelect: () => onRename(identity.id),
+              shortcut: 'F2',
+            },
+            {
+              icon: <Copy aria-hidden='true' />,
+              id: 'duplicate-project',
+              label: gt('Duplicate project'),
+              onSelect: () => onDuplicate(identity.id),
+            },
+          ],
+        },
+        {
+          label: gt('Tab order'),
+          items: [
+            {
+              disabled: tabIndex <= 0,
+              icon: <ChevronLeft aria-hidden='true' />,
+              id: 'move-left',
+              label: gt('Move tab left'),
+              onSelect: () => onMove(identity.id, -1),
+              shortcut: '⌥←',
+            },
+            {
+              disabled: tabIndex < 0 || tabIndex >= tabCount - 1,
+              icon: <ChevronRight aria-hidden='true' />,
+              id: 'move-right',
+              label: gt('Move tab right'),
+              onSelect: () => onMove(identity.id, 1),
+              shortcut: '⌥→',
+            },
+          ],
+        },
+        {
+          items: [
+            {
+              icon: <X aria-hidden='true' />,
+              id: 'close-tab',
+              label: gt('Close tab'),
+              onSelect: () => onCloseTab(identity.id),
+            },
+            {
+              disabled: openCount <= 1,
+              icon: <PanelTopClose aria-hidden='true' />,
+              id: 'close-others',
+              label: gt('Close other tabs'),
+              onSelect: () => onCloseOthers(identity.id),
+            },
+          ],
+        },
+      ] : []}
+    />
+  );
+}
+
+function ProjectTabMark({ identity, selected }: { identity: BrandIdentity; selected: boolean }) {
+  return (
+    <ThemeAwareBrandMark
+      className='project-tab-mark'
+      identity={identity}
+      inverse={selected}
+    />
+  );
+}
+
+const PERSISTENT_WORKSPACE_TOOL_IDS = ['material', 'animation', 'lottie'] as const satisfies readonly StudioToolId[];
+const MATERIAL_TOOL = STUDIO_TOOLS.find(({ id }) => id === 'material');
+// Design Lab keys drafts by its legacy internal scope. One shared object keeps the
+// memoized editor from re-rendering on every panel render.
+const DESIGN_LAB_DRAFT_TOOL = MATERIAL_TOOL ? { ...MATERIAL_TOOL, id: 'logo-shader' as const } : undefined;
+
+function isPersistentWorkspaceTool(toolId: StudioToolId): toolId is typeof PERSISTENT_WORKSPACE_TOOL_IDS[number] {
+  return PERSISTENT_WORKSPACE_TOOL_IDS.includes(toolId as typeof PERSISTENT_WORKSPACE_TOOL_IDS[number]);
+}
+
+export function retainedProjectWorkspaceIdentities(
+  identities: readonly BrandIdentity[],
+  openIdentityIds: readonly string[],
+  warmIdentityIds: readonly string[],
+  activeIdentityId: string | undefined
+): BrandIdentity[] {
+  const openIds = new Set(openIdentityIds);
+  const retainedIds = new Set(warmIdentityIds);
+  if (activeIdentityId) retainedIds.add(activeIdentityId);
+  // Tab order must not move mounted editors or their global @font-face styles.
+  return identities.filter(({ id }) => openIds.has(id) && retainedIds.has(id));
+}
+
+/**
+ * A hidden editor keeps the props it last rendered with, so edits in the visible
+ * tool (typing a brand name, for example) do not re-render paused editors. It
+ * renders once as it hides, to pause, and catches up when it is shown again.
+ */
+const HiddenEditorFreeze = memo(function HiddenEditorFreeze({ children }: { children: ReactNode; visible: boolean }) {
+  return children;
+}, (previous, next) => !previous.visible && !next.visible);
+
+export const StudioWorkspacePanels = memo(function StudioWorkspacePanels({
+  active,
+  activeIdentity,
+  activeTool,
+  activeToolId,
+  hasPendingIdentityChanges,
+  onIdentityChange,
+  onIdentitySave,
+}: {
+  active: boolean;
+  activeIdentity: BrandIdentity;
+  activeTool: StudioTool;
+  activeToolId: StudioToolId;
+  hasPendingIdentityChanges: boolean;
+  onIdentityChange: (identity: BrandIdentity) => void;
+  onIdentitySave: (identity: BrandIdentity) => void;
+}) {
+  const [visitedPersistentTools, setVisitedPersistentTools] = useState<StudioToolId[]>(() => (
+    active && isPersistentWorkspaceTool(activeToolId) ? [activeToolId] : []
+  ));
+  useEffect(() => {
+    if (!active || !isPersistentWorkspaceTool(activeToolId)) return;
+    setVisitedPersistentTools((current) => current.includes(activeToolId)
+      ? current
+      : [...current, activeToolId]);
+  }, [active, activeToolId]);
+  const mountedPersistentTools = active && isPersistentWorkspaceTool(activeToolId)
+    && !visitedPersistentTools.includes(activeToolId)
+    ? [...visitedPersistentTools, activeToolId]
+    : visitedPersistentTools;
+  const persistentToolIsActive = isPersistentWorkspaceTool(activeToolId);
+  const transientTool = active && !persistentToolIsActive ? activeTool : null;
+  // A tool that is not retained stays mounted, hidden and inert, for the length
+  // of the crossfade, so the next tool fades in over it rather than over a blank pane.
+  const [shownTransientTool, setShownTransientTool] = useState(transientTool);
+  const [leavingTool, setLeavingTool] = useState<StudioTool | null>(null);
+  if (shownTransientTool?.id !== transientTool?.id) {
+    setShownTransientTool(transientTool);
+    setLeavingTool(shownTransientTool);
+  }
+  useEffect(() => {
+    if (!leavingTool) return;
+    const timer = window.setTimeout(() => setLeavingTool(null), STUDIO_LAYER_FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [leavingTool]);
+
+  function renderTransientEditor(tool: StudioTool) {
+    return tool.id === 'identity' ? (
+      <BrandSettingsStudio
+        hasPendingChanges={hasPendingIdentityChanges}
+        identity={activeIdentity}
+        onChange={onIdentityChange}
+        onSave={onIdentitySave}
+        tool={tool}
+      />
+    ) : (
+      <StudioToolWorkspace
+        hasPendingIdentityChanges={hasPendingIdentityChanges}
+        identity={activeIdentity}
+        onIdentityChange={onIdentityChange}
+        onIdentitySave={onIdentitySave}
+        tool={tool}
+      />
+    );
+  }
+
+  // One keyed list, so an editor keeps its instance as it moves between the
+  // active and leaving slots.
+  const layers = mountedPersistentTools.map((toolId) => {
+    const tool = STUDIO_TOOLS.find((candidate) => candidate.id === toolId);
+    if (!tool) return null;
+    const layerIsVisible = active && activeToolId === toolId;
+    const renderActive = layerIsVisible;
+    return (
+      <div
+        aria-hidden={!layerIsVisible}
+        className='studio-workspace-layer'
+        data-active={layerIsVisible ? 'true' : 'false'}
+        inert={!layerIsVisible}
+        key={`${activeIdentity.id}-${toolId}`}
+      >
+        <HiddenEditorFreeze visible={layerIsVisible}>
+          {toolId === 'animation' ? (
+            <AnimationStudio active={renderActive} embedded identity={activeIdentity} />
+          ) : toolId === 'lottie' ? (
+            <LottieStudio active={renderActive} identity={activeIdentity} />
+          ) : toolId === 'material' ? (
+            <ShaderLabStudio
+              active={renderActive}
+              automationToolId={tool.id}
+              identity={activeIdentity}
+              onIdentitySave={onIdentitySave}
+              tool={DESIGN_LAB_DRAFT_TOOL ?? tool}
+            />
+          ) : (
+            <StudioToolWorkspace
+              active={renderActive}
+              hasPendingIdentityChanges={hasPendingIdentityChanges}
+              identity={activeIdentity}
+              onIdentityChange={onIdentityChange}
+              onIdentitySave={onIdentitySave}
+              tool={tool}
+            />
+          )}
+        </HiddenEditorFreeze>
+      </div>
+    );
+  });
+  if (leavingTool && leavingTool.id !== transientTool?.id) {
+    layers.push(
+      <div
+        aria-hidden='true'
+        className='studio-workspace-layer'
+        data-active='false'
+        data-leaving='true'
+        inert
+        key={`${activeIdentity.id}-${leavingTool.id}`}
+      >
+        <HiddenEditorFreeze visible={false}>{renderTransientEditor(leavingTool)}</HiddenEditorFreeze>
+      </div>
+    );
+  }
+  if (transientTool) {
+    layers.push(
+      <div
+        className='studio-workspace-layer'
+        data-active='true'
+        key={`${activeIdentity.id}-${transientTool.id}`}
+      >
+        <HiddenEditorFreeze visible>{renderTransientEditor(transientTool)}</HiddenEditorFreeze>
+      </div>
+    );
+  }
+
+  return (
+    <div className='studio-workspace-panel studio-workspace-panel--persistent-labs'>
+      {layers}
+    </div>
+  );
+});
+
+type DeferredWorkspace = {
+  identity: BrandIdentity | undefined;
+  pending: boolean;
+  ready: boolean;
+  skeletonRetired: boolean;
+  tool: StudioTool | undefined;
+  toolId: StudioToolId;
+};
+
+/**
+ * Navigation (tool list, project tabs) follows a click at once; the workspace
+ * follows in deferred, interruptible renders, so mounting or waking an editor
+ * never blocks the click's frame and a loading editor never replaces the one on
+ * screen. `pending` is true while the workspace lags behind the navigation.
+ */
+function useDeferredWorkspace(
+  activeToolId: StudioToolId,
+  activeIdentity: BrandIdentity | undefined,
+  identities: readonly BrandIdentity[],
+  identitiesReady: boolean
+): DeferredWorkspace {
+  const toolId = useDeferredValue(activeToolId);
+  const identityId = useDeferredValue(activeIdentity?.id);
+  const ready = useDeferredValue(identitiesReady);
+  const [skeletonRetired, setSkeletonRetired] = useState(false);
+  useEffect(() => {
+    if (!ready || skeletonRetired) return;
+    // The first editor fades in over the skeleton, then the skeleton unmounts.
+    const timer = window.setTimeout(() => setSkeletonRetired(true), STUDIO_LAYER_FADE_MS + 40);
+    return () => window.clearTimeout(timer);
+  }, [ready, skeletonRetired]);
+  useEffect(() => (skeletonRetired ? scheduleStudioToolPrefetch() : undefined), [skeletonRetired]);
+  return {
+    identity: identities.find(({ id }) => id === identityId) ?? activeIdentity,
+    pending: ready !== identitiesReady || toolId !== activeToolId || identityId !== activeIdentity?.id,
+    ready,
+    skeletonRetired,
+    tool: STUDIO_TOOLS.find(({ id }) => id === toolId),
+    toolId,
+  };
+}
+
+function StudioWorkspaceView({
+  fallbackTool,
+  identities,
+  onIdentityChange,
+  onIdentitySave,
+  openIdentityIds,
+  pendingIdentities,
+  workspace,
+}: {
+  fallbackTool: StudioTool;
+  identities: readonly BrandIdentity[];
+  onIdentityChange: (identity: BrandIdentity) => void;
+  onIdentitySave: (identity: BrandIdentity) => void;
+  openIdentityIds: ReadonlySet<string>;
+  pendingIdentities: Record<string, BrandIdentity>;
+  workspace: DeferredWorkspace;
+}) {
+  const workspaceIdentity = workspace.ready ? workspace.identity : undefined;
+  const open = Boolean(workspaceIdentity && openIdentityIds.has(workspaceIdentity.id));
+  const showSkeleton = !workspace.skeletonRetired && (!workspace.ready || open);
+  let content: ReactNode = null;
+  if (workspaceIdentity && !open) content = <ClosedProjectNotice />;
+  else if (workspaceIdentity) {
+    content = identities.map((identity) => {
+      const projectIsActive = identity.id === workspaceIdentity.id;
+      return (
+        <div
+          aria-hidden={!projectIsActive}
+          className='studio-project-workspace-layer'
+          data-active={projectIsActive ? 'true' : 'false'}
+          data-project={identity.id}
+          inert={!projectIsActive}
+          key={identity.id}
+        >
+          <StudioWorkspacePanels
+            active={projectIsActive}
+            activeIdentity={identity}
+            activeTool={workspace.tool ?? fallbackTool}
+            activeToolId={workspace.toolId}
+            hasPendingIdentityChanges={Boolean(pendingIdentities[identity.id])}
+            onIdentityChange={onIdentityChange}
+            onIdentitySave={onIdentitySave}
+          />
+        </div>
+      );
+    });
+  }
+  return (
+    <>
+      <span aria-hidden='true' className='studio-workspace-progress' data-pending={workspace.pending ? 'true' : 'false'} />
+      <div className='studio-workspace-view'>
+        {showSkeleton ? <StudioWorkspaceSkeleton /> : null}
+        <Suspense fallback={<StudioWorkspaceSkeleton />}>{content}</Suspense>
+      </div>
+    </>
+  );
+}
+
+/** Tool list in the Studio sidebar. Memoized: it changes only with the active tool. */
+const StudioToolNav = memo(function StudioToolNav({
+  activeToolId,
+  onSelect,
+}: {
+  activeToolId: StudioToolId;
+  onSelect: (toolId: StudioToolId) => void;
+}) {
+  const gt = useGT();
+  return (
+    <div className='studio-sidebar-scroll studio-scroll-area min-h-0 flex-1 overflow-y-auto px-2 py-3'>
+      {STUDIO_CATEGORIES.map((category) => {
+        const tools = STUDIO_TOOLS.filter((tool) => tool.category === category);
+        if (tools.length === 0) return null;
+
+        return (
+          <section className='flex flex-col gap-1 py-2' key={category}>
+            <h2 className='px-2 pb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground'>
+              {gt(category)}
+            </h2>
+            <div className='flex flex-col gap-0.5'>
+              {tools.map((tool) => {
+                const Icon = STUDIO_TOOL_ICONS[tool.id];
+                const selected = activeToolId === tool.id;
+                return (
+                  <Button
+                    aria-current={selected ? 'page' : undefined}
+                    aria-label={gt(tool.name)}
+                    className='h-9 w-full justify-start border-0 px-2.5'
+                    key={tool.id}
+                    onFocus={() => void preloadStudioTool(tool.id)}
+                    onClick={() => onSelect(tool.id)}
+                    onPointerEnter={() => void preloadStudioTool(tool.id)}
+                    title={`${gt(tool.name)} — ${gt(tool.description)}`}
+                    type='button'
+                    variant={selected ? 'default' : 'ghost'}
+                  >
+                    <Icon aria-hidden='true' />
+                    <span className='min-w-0 flex-1 truncate text-left'>{gt(tool.name)}</span>
+                  </Button>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+});
+
+/** Owns the search text, so typing a query re-renders only the palette. */
+function StudioCommandSearch({
+  activeToolId,
+  onClose,
+  onSelect,
+}: {
+  activeToolId: StudioToolId;
+  onClose: () => void;
+  onSelect: (toolId: StudioToolId) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const tools = useMemo(() => filterStudioTools(STUDIO_TOOLS, query), [query]);
+  return (
+    <StudioCommandPalette
+      activeToolId={activeToolId}
+      onClose={onClose}
+      onSelect={onSelect}
+      query={query}
+      setQuery={setQuery}
+      tools={tools}
+    />
+  );
+}
+
+function ClosedProjectNotice() {
+  return (
+    <div className='studio-closed-projects-empty'>
+      <Folder aria-hidden='true' />
+      <div>
+        <h2><T>No project tab open</T></h2>
+        <p><T>Your brands and every saved draft are still available in the project folder menu.</T></p>
+      </div>
+    </div>
+  );
+}
+
+function StudioSaveToast({
+  identityId,
+  onIgnore,
+  onSave,
+  visible,
+}: {
+  identityId: string;
+  onIgnore: (identityId: string) => void;
+  onSave: (identityId: string) => void;
+  visible: boolean;
+}) {
+  if (!visible) return null;
+  return (
+    <div aria-live='polite' className='studio-save-toast' role='status'>
+      <div className='studio-save-toast-copy'>
+        <strong><T>Save these brand changes?</T></strong>
+        <span><T>Apply them across every design, or ignore this draft.</T></span>
+      </div>
+      <Button onClick={() => onIgnore(identityId)} size='sm' type='button' variant='ghost'>
+        <T>Ignore</T>
+      </Button>
+      <Button onClick={() => onSave(identityId)} size='sm' type='button'>
+        <Save aria-hidden='true' />
+        <T>Save changes</T>
+      </Button>
+    </div>
+  );
+}
+
+const StudioAppHeader = memo(function StudioAppHeader({
+  activeToolId,
+  appearance,
+  onAppearanceChange,
+  onCommandOpen,
+  onThemeToggle,
+  onToolSelect,
+  resolvedTheme,
+}: {
+  activeToolId: StudioToolId;
+  appearance: StudioAppearance;
+  onAppearanceChange: (patch: Partial<StudioAppearance>) => void;
+  onCommandOpen: () => void;
+  onThemeToggle: () => void;
+  onToolSelect: (toolId: StudioToolId) => void;
+  resolvedTheme: ResolvedTheme | undefined;
+}) {
+  const gt = useGT();
+  const alternateTheme = resolvedTheme ? (resolvedTheme === 'light' ? 'dark' : 'light') : undefined;
+  const alternateThemeLabel = alternateTheme
+    ? gt('Switch to {theme} mode', { theme: alternateTheme })
+    : gt('Toggle color theme');
+
+  return (
+    <header className='app-navbar studio-app-header border-b border-border bg-background' data-canvas-selection-preserve>
+      <Link
+        aria-label={PRODUCT_BRAND.name}
+        className='flex min-w-0 items-center gap-2.5 border-r border-border px-3.5'
+        href='/'
+      >
+        <Image
+          alt={gt('Glyphfield mark')}
+          className='size-7 object-contain'
+          height={28}
+          priority
+          src={PRODUCT_BRAND.markPath}
+          width={28}
+        />
+        <p className='truncate text-sm font-semibold tracking-tight'>{PRODUCT_BRAND.name}</p>
+      </Link>
+
+      <div className='studio-search-bar flex min-w-0 items-center gap-2 px-3'>
+        <StudioSelect
+          ariaLabel={gt('Active Studio tool')}
+          className='studio-mobile-tool min-w-0'
+          onValueChange={(value) => onToolSelect(value as StudioToolId)}
+          options={STUDIO_TOOLS.map((tool) => ({ label: gt(tool.name), value: tool.id }))}
+          value={activeToolId}
+        />
+        <button
+          aria-haspopup='dialog'
+          aria-keyshortcuts='Meta+K Control+K /'
+          className='studio-command-launcher flex h-9 min-w-0 flex-1 max-w-xl items-center gap-2 border border-input bg-background px-3 text-left hover:border-foreground'
+          onClick={onCommandOpen}
+          type='button'
+        >
+          <Search className='size-4 shrink-0 text-muted-foreground' aria-hidden='true' />
+          <span className='min-w-0 flex-1 truncate text-sm text-muted-foreground'><T>Search Studio tools…</T></span>
+          <kbd className='hidden border border-border px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline'>⌘K</kbd>
+        </button>
+        <div className='studio-appearance-toolbar ml-auto flex shrink-0 items-center gap-1.5'>
+          <GitHubStarButton className='studio-github-star-button' />
+          <Button asChild size='icon-sm' title={gt('Documentation')} variant='outline'>
+            <Link aria-label={gt('Open documentation')} href='/docs'>
+              <BookOpen aria-hidden='true' />
+            </Link>
+          </Button>
+          <AppearanceMenu appearance={appearance} onChange={onAppearanceChange} />
+          <Button
+            aria-label={alternateThemeLabel}
+            onClick={onThemeToggle}
+            size='icon-sm'
+            title={alternateThemeLabel}
+            type='button'
+            variant='outline'
+          >
+            <Moon aria-hidden='true' className='app-theme-icon--light' />
+            <Sun aria-hidden='true' className='app-theme-icon--dark' />
+          </Button>
+        </div>
+      </div>
+    </header>
+  );
+});
+
+export default function StudioApp() {
+  const gt = useGT();
+  const { theme, resolvedTheme, setTheme, toggleTheme } = useAppTheme();
+  const [activeToolId, setActiveToolId] = useState<StudioToolId>('identity');
+  const [identities, setIdentities] = useState<BrandIdentity[]>(() =>
+    hydrateBrandIdentities(null)
+  );
+  const identitiesRef = useCommittedRef(identities);
+  const [pendingIdentities, setPendingIdentities] = useState<Record<string, BrandIdentity>>({});
+  const [identitiesReady, setIdentitiesReady] = useState(false);
+  const [duplicatingProject, setDuplicatingProject] = useState(false);
+  // The project the delete confirmation names; it closes if another project becomes active.
+  const [deleteConfirmationId, setDeleteConfirmationId] = useState<string | null>(null);
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [draftSaveFailed, setDraftSaveFailed] = useState(false);
+  useEffect(() => {
+    const update = () => setDraftSaveFailed(failedDraftCount() > 0);
+    update();
+    window.addEventListener(DRAFT_STORAGE_STATUS, update);
+    return () => window.removeEventListener(DRAFT_STORAGE_STATUS, update);
+  }, []);
+  const duplicatePendingRef = useRef(false);
+  const activateCreatedIdentityRef = useCommittedRef(activateCreatedIdentity);
+  const [activeIdentityId, setActiveIdentityId] = useState(STARTER_BRAND_IDENTITY.id);
+  const [activeFolderId, setActiveFolderId] = useState<ProjectFolderId>('all');
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [projectTabMenu, setProjectTabMenu] = useState<ProjectTabMenuState | null>(null);
+  const [renamingIdentityId, setRenamingIdentityId] = useState<string | null>(null);
+  const [projectNameDraft, setProjectNameDraft] = useState('');
+  const [tabOrderAnnouncement, setTabOrderAnnouncement] = useState('');
+  const projectTabsScrollRef = useRef<HTMLDivElement>(null);
+  const projectNameInputRef = useRef<HTMLInputElement>(null);
+  const [tabScrollState, setTabScrollState] = useState({
+    availableWidth: 0,
+    canScrollLeft: false,
+    canScrollRight: false,
+    viewportWidth: 0,
+  });
+  const [openIdentityIds, setOpenIdentityIds] = usePersistentState<string[]>(
+    OPEN_TABS_STORAGE_KEY,
+    [STARTER_BRAND_IDENTITY.id, GT_BRAND_IDENTITY.id]
+  );
+  const [warmIdentityIds, setWarmIdentityIds] = useState<string[]>([]);
+  const [appearance, setAppearance] = usePersistentState<StoredStudioAppearance>(
+    APPEARANCE_STORAGE_KEY,
+    DEFAULT_APPEARANCE
+  );
+  const resolvedAppearance = useMemo<StudioAppearance>(() => ({
+    ...DEFAULT_APPEARANCE,
+    ...appearance,
+    accentColor: normalizeHexOrFallback(appearance.accentColor, DEFAULT_APPEARANCE.accentColor),
+    font: normalizeStudioFont(appearance.font),
+    theme,
+  }), [appearance, theme]);
+  // Stable handlers for the memoized header and tool navigation.
+  const handleAppearanceChange = useCallback((patch: Partial<StudioAppearance>) => {
+    const { theme: nextTheme, ...appearancePatch } = patch;
+    if (nextTheme) setTheme(nextTheme);
+    if (Object.keys(appearancePatch).length === 0) return;
+    setAppearance((current) => {
+      const { theme: _legacyTheme, ...currentAppearance } = current as Partial<StudioAppearance>;
+      return { ...DEFAULT_APPEARANCE, ...currentAppearance, ...appearancePatch };
+    });
+  }, [setAppearance, setTheme]);
+  const openCommandSearch = useCallback(() => setCommandOpen(true), []);
+  const activeTool = STUDIO_TOOLS.find(({ id }) => id === activeToolId);
+  const resolvedIdentities = useMemo(
+    () => identities.map((identity) => pendingIdentities[identity.id] ?? identity),
+    [identities, pendingIdentities]
+  );
+  const activeIdentity =
+    resolvedIdentities.find(({ id }) => id === activeIdentityId) ?? resolvedIdentities[0];
+  const workspace = useDeferredWorkspace(activeToolId, activeIdentity, resolvedIdentities, identitiesReady);
+  const resolvedIdentitiesRef = useCommittedRef(resolvedIdentities);
+  const selectToolRef = useCommittedRef(selectTool);
+  const handleToolSelect = useCallback((toolId: StudioToolId) => selectToolRef.current(toolId), [selectToolRef]);
+  // identity.project.create adds and opens projects the same way the Add brand project menu does.
+  useMountEffect(() => registerBrandProjectHost({
+    activate: (identity) => {
+      activateCreatedIdentityRef.current(identity);
+      selectToolRef.current('identity');
+    },
+    duplicate: async (identity, existingNames) => {
+      const { duplicateStudioProject } = await import('@/lib/studioProjectDuplication');
+      return duplicateStudioProject(identity, existingNames);
+    },
+    identities: () => resolvedIdentitiesRef.current,
+  }));
+  const activeIdentityHasPendingChanges = Boolean(
+    activeIdentity && pendingIdentities[activeIdentity.id]
+  );
+  const identityById = useMemo(
+    () => new Map(resolvedIdentities.map((identity) => [identity.id, identity])),
+    [resolvedIdentities]
+  );
+  const retainedWorkspaceIdentities = useMemo(() => retainedProjectWorkspaceIdentities(
+    resolvedIdentities,
+    openIdentityIds,
+    warmIdentityIds,
+    workspace.identity?.id
+  ), [workspace.identity?.id, resolvedIdentities, openIdentityIds, warmIdentityIds]);
+  const visibleIdentities = useMemo(
+    () =>
+      openIdentityIds
+        .map((identityId) => identityById.get(identityId))
+        .filter(
+          (identity): identity is BrandIdentity =>
+            identity !== undefined && identityBelongsToFolder(identity, activeFolderId)
+        ),
+    [activeFolderId, identityById, openIdentityIds]
+  );
+  const projectTabDensity = getProjectTabDensity(
+    visibleIdentities.length,
+    tabScrollState.availableWidth,
+    tabScrollState.viewportWidth
+  );
+  const activeProjectTabIndex = visibleIdentities.findIndex(
+    ({ id }) => id === activeIdentity?.id
+  );
+  const {
+    projectTabSelectionRef,
+    handleProjectTabPointerDown,
+    handleProjectTabPointerMove,
+    handleProjectTabPointerEnd,
+    handleProjectTabPointerCancel,
+    handleProjectTabClickCapture,
+    handleProjectTabClick,
+  } = useProjectTabInteraction({
+    activeIdentityId: activeIdentity?.id,
+    activeProjectTabIndex,
+    onDragStart: () => setProjectTabMenu(null),
+    onReorder: commitProjectTabReorder,
+    onSelect: (identityId) => {
+      setProjectTabMenu(null);
+      selectIdentity(identityId);
+    },
+  });
+  const openIdentityIdSet = useMemo(() => new Set(openIdentityIds), [openIdentityIds]);
+  const activeIdentityIsOpen = openIdentityIdSet.has(activeIdentity?.id ?? '');
+  const projectTabMenuIdentity = projectTabMenu
+    ? identityById.get(projectTabMenu.identityId) ?? null
+    : null;
+  const projectTabMenuIndex = projectTabMenuIdentity
+    ? visibleIdentities.findIndex(({ id }) => id === projectTabMenuIdentity.id)
+    : -1;
+  useEffect(() => {
+    if (!renamingIdentityId) return;
+    const animationFrame = window.requestAnimationFrame(() => {
+      projectNameInputRef.current?.focus();
+      projectNameInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [renamingIdentityId]);
+  const folderCounts = useMemo(
+    () =>
+      Object.fromEntries(
+        PROJECT_FOLDERS.map((folder) => [
+          folder.id,
+          resolvedIdentities.filter((identity) => identityBelongsToFolder(identity, folder.id)).length,
+        ])
+      ) as Record<ProjectFolderId, number>,
+    [resolvedIdentities]
+  );
+
+  useMountEffect(() => {
+    try {
+      const launch = loadStudioLaunchState();
+      setIdentities(launch.identities);
+      void inspectStoredWebFonts(launch.identities).then((restore) => {
+        setIdentities((current) => current.map(restore));
+        setPendingIdentities((current) => Object.fromEntries(Object.entries(current).map(([id, identity]) => [id, restore(identity)])));
+      });
+      if (!launch.hasStoredTabs || launch.requestedSelection) {
+        setOpenIdentityIds((current) => {
+          const initialIds = launch.hasStoredTabs
+            ? current
+            : [
+                STARTER_BRAND_IDENTITY.id,
+                GT_BRAND_IDENTITY.id,
+              ];
+          return !initialIds.includes(launch.activeIdentity.id)
+            ? [...initialIds, launch.activeIdentity.id]
+            : initialIds;
+        });
+      }
+      setActiveIdentityId(launch.activeIdentity.id);
+      if (launch.requestedSelection) {
+        window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, launch.activeIdentity.id);
+      }
+      if (launch.toolId) setActiveToolId(launch.toolId);
+      setActiveFolderId(launch.folder.folderId);
+      if (launch.folder.persist) {
+        window.localStorage.setItem(ACTIVE_FOLDER_STORAGE_KEY, launch.folder.folderId);
+      }
+    } catch {
+      setIdentities(hydrateBrandIdentities(null));
+      setActiveIdentityId(STARTER_BRAND_IDENTITY.id);
+    } finally {
+      setIdentitiesReady(true);
+    }
+  });
+
+  useEffect(() => {
+    if (!identitiesReady || !activeIdentityIsOpen || !activeIdentity) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('tool', activeToolId);
+    url.searchParams.set('project', activeIdentity.id);
+    url.searchParams.set('folder', activeFolderId);
+    if (url.href !== window.location.href) {
+      window.history.replaceState(null, '', url);
+    }
+  }, [activeFolderId, activeIdentity?.id, activeIdentityIsOpen, activeToolId, identitiesReady]);
+
+  useMountEffect(() => {
+    const rail = projectTabsScrollRef.current;
+    if (!rail) return;
+
+    let animationFrame = 0;
+    const updateScrollState = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        const scrollCues = getProjectTabScrollCues(
+          rail.scrollLeft,
+          rail.clientWidth,
+          rail.scrollWidth
+        );
+        const nextState = {
+          availableWidth: rail.clientWidth,
+          ...scrollCues,
+          viewportWidth: window.innerWidth,
+        };
+        setTabScrollState((current) =>
+          current.availableWidth === nextState.availableWidth &&
+          current.canScrollLeft === nextState.canScrollLeft &&
+          current.canScrollRight === nextState.canScrollRight &&
+          current.viewportWidth === nextState.viewportWidth
+            ? current
+            : nextState
+        );
+      });
+    };
+
+    const resizeObserver = new ResizeObserver(updateScrollState);
+    const mutationObserver = new MutationObserver(updateScrollState);
+    resizeObserver.observe(rail);
+    const tabList = rail.querySelector<HTMLElement>('.project-tabs-tablist');
+    const addButton = rail.querySelector<HTMLElement>('.project-tab-add');
+    if (tabList) resizeObserver.observe(tabList);
+    if (addButton) resizeObserver.observe(addButton);
+    mutationObserver.observe(rail, { childList: true, subtree: true });
+    rail.addEventListener('scroll', updateScrollState, { passive: true });
+    updateScrollState();
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      rail.removeEventListener('scroll', updateScrollState);
+    };
+  });
+
+  useMountEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target;
+      const isEditing =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable);
+      const isCommandK =
+        (event.metaKey || event.ctrlKey) &&
+        (event.code === 'KeyK' || event.key.toLocaleLowerCase() === 'k');
+
+      if (isCommandK) {
+        event.preventDefault();
+        event.stopPropagation();
+        setCommandOpen(true);
+        return;
+      }
+
+      if (!isEditing && event.key === '/') {
+        event.preventDefault();
+        event.stopPropagation();
+        setCommandOpen(true);
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => document.removeEventListener('keydown', handleKeyDown, { capture: true });
+  });
+
+  function selectTool(toolId: StudioToolId) {
+    setActiveToolId(toolId);
+    window.localStorage.setItem(ACTIVE_TOOL_STORAGE_KEY, toolId);
+  }
+
+  function closeCommandPalette() {
+    setCommandOpen(false);
+  }
+
+  const commitIdentities = useCallback((nextIdentities: BrandIdentity[]) => {
+    try {
+      window.localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(nextIdentities));
+    } catch {
+      setProjectError('Local storage could not save this change. Keep the app open, export your work, free storage and retry.');
+      return false;
+    }
+    setIdentities(nextIdentities);
+    return true;
+  }, []);
+
+  function selectIdentity(identityId: string) {
+    warmProjectWorkspace(identityId);
+    setOpenIdentityIds((current) =>
+      current.includes(identityId) ? current : [...current, identityId]
+    );
+    setActiveIdentityId(identityId);
+    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, identityId);
+    if (!tabScrollState.canScrollLeft && !tabScrollState.canScrollRight) return;
+    window.requestAnimationFrame(() => {
+      const rail = projectTabsScrollRef.current;
+      const tab = rail?.querySelector<HTMLElement>(
+        `[data-project-id="${CSS.escape(identityId)}"]`
+      );
+      if (!rail || !tab) return;
+      const railBounds = rail.getBoundingClientRect();
+      const tabBounds = tab.getBoundingClientRect();
+      if (tabBounds.left >= railBounds.left && tabBounds.right <= railBounds.right) return;
+      tab.scrollIntoView({
+          behavior: resolvedAppearance.motion === 'reduced' ? 'auto' : 'smooth',
+          block: 'nearest',
+          inline: 'nearest',
+      });
+    });
+  }
+
+  function warmProjectWorkspace(identityId: string) {
+    const activeId = activeIdentity?.id;
+    startTransition(() => {
+      setWarmIdentityIds((current) => {
+        if (current.includes(identityId) && (!activeId || current.includes(activeId))) {
+          return current;
+        }
+        return [
+          ...current.filter((candidate) => candidate !== identityId && candidate !== activeId),
+          ...(activeId ? [activeId] : []),
+          identityId,
+        ].slice(-MAX_RETAINED_PROJECT_WORKSPACES);
+      });
+    });
+  }
+
+  function scrollProjectTabs(direction: -1 | 1) {
+    const rail = projectTabsScrollRef.current;
+    if (!rail) return;
+    rail.scrollLeft += direction * Math.max(180, rail.clientWidth * 0.64);
+  }
+
+  function closeIdentity(identityId: string) {
+    const closingIndex = visibleIdentities.findIndex(({ id }) => id === identityId);
+    const nextOpenIdentityIds = openIdentityIds.filter((id) => id !== identityId);
+    setOpenIdentityIds(nextOpenIdentityIds);
+    if (projectTabMenu?.identityId === identityId) setProjectTabMenu(null);
+
+    if (identityId !== activeIdentity?.id) return;
+    const folderCandidates = nextOpenIdentityIds
+      .map((id) => identityById.get(id))
+      .filter(
+        (identity): identity is BrandIdentity =>
+          identity !== undefined && identityBelongsToFolder(identity, activeFolderId)
+      );
+    const nextIdentity =
+      folderCandidates[Math.min(Math.max(0, closingIndex), folderCandidates.length - 1)] ??
+      nextOpenIdentityIds
+        .map((id) => identityById.get(id))
+        .find((identity): identity is BrandIdentity => identity !== undefined);
+    if (nextIdentity) selectIdentity(nextIdentity.id);
+  }
+
+  function activateCreatedIdentity(identity: BrandIdentity) {
+    const exampleIndex = identities.findIndex(({ kind }) => kind === 'example');
+    const nextIdentities =
+      exampleIndex < 0
+        ? [...identities, identity]
+        : [...identities.slice(0, exampleIndex), identity, ...identities.slice(exampleIndex)];
+    if (!commitIdentities(nextIdentities)) throw new Error('The project could not be saved locally.');
+    setActiveFolderId('all');
+    window.localStorage.setItem(ACTIVE_FOLDER_STORAGE_KEY, 'all');
+    selectIdentity(identity.id);
+  }
+
+  async function copyIdentityById(identityId: string) {
+    const identity = identityById.get(identityId);
+    if (!identity || duplicatePendingRef.current) return;
+    duplicatePendingRef.current = true;
+    setDuplicatingProject(true);
+    setProjectError(null);
+    try {
+      const { duplicateStudioProject } = await import('@/lib/studioProjectDuplication');
+      const copy = await duplicateStudioProject(identity, resolvedIdentities.map(({ name }) => name));
+      activateCreatedIdentityRef.current(copy);
+      setTabOrderAnnouncement(`Duplicated ${identity.name} as ${copy.name}.`);
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : 'This project could not be duplicated.');
+    } finally {
+      duplicatePendingRef.current = false;
+      setDuplicatingProject(false);
+    }
+  }
+
+  function copyIdentity() {
+    if (activeIdentity) void copyIdentityById(activeIdentity.id);
+  }
+
+  function closeOtherIdentities() {
+    if (!activeIdentity) return;
+    setOpenIdentityIds([activeIdentity.id]);
+    setActiveFolderId('all');
+    window.localStorage.setItem(ACTIVE_FOLDER_STORAGE_KEY, 'all');
+  }
+
+  function selectProjectFolder(folderId: ProjectFolderId) {
+    setActiveFolderId(folderId);
+    window.localStorage.setItem(ACTIVE_FOLDER_STORAGE_KEY, folderId);
+    if (activeIdentity && identityBelongsToFolder(activeIdentity, folderId)) return;
+    const nextIdentity = identities.find((identity) => identityBelongsToFolder(identity, folderId));
+    if (nextIdentity) selectIdentity(nextIdentity.id);
+  }
+
+  function beginProjectRename(identityId: string) {
+    const identity = identityById.get(identityId);
+    if (!identity) return;
+    setProjectTabMenu(null);
+    selectIdentity(identityId);
+    setProjectNameDraft(identity.name);
+    setRenamingIdentityId(identityId);
+  }
+
+  function commitIdentityName(identityId: string, name: string) {
+    const identity = identities.find((candidate) => candidate.id === identityId);
+    if (!identity) return;
+    const renamedIdentity = renameBrandIdentity(identity, name);
+    if (renamedIdentity === identity) return;
+    if (!commitIdentities(identities.map((candidate) =>
+      candidate.id === identityId ? renamedIdentity : candidate
+    ))) return;
+    setPendingIdentities((current) => {
+      const pendingIdentity = current[identityId];
+      if (!pendingIdentity) return current;
+      return {
+        ...current,
+        [identityId]: renameBrandIdentity(pendingIdentity, name),
+      };
+    });
+  }
+
+  function finishProjectRename(identityId: string, save: boolean) {
+    if (save && projectNameDraft.trim()) commitIdentityName(identityId, projectNameDraft);
+    setRenamingIdentityId(null);
+    setProjectNameDraft('');
+  }
+
+  const updateIdentity = useCallback((nextIdentity: BrandIdentity) => {
+    setPendingIdentities((current) => ({
+      ...current,
+      [nextIdentity.id]: nextIdentity,
+    }));
+  }, []);
+
+  function saveIdentityChanges(identityId: string) {
+    const pendingIdentity = pendingIdentities[identityId];
+    if (!pendingIdentity) return;
+    if (!commitIdentities(
+      identities.map((identity) =>
+        identity.id === identityId ? pendingIdentity : identity
+      )
+    )) return;
+    setPendingIdentities((current) => {
+      const nextPendingIdentities = { ...current };
+      delete nextPendingIdentities[identityId];
+      return nextPendingIdentities;
+    });
+  }
+
+  // Stable across identity edits so retained editors of other projects do not re-render.
+  const saveIdentityImmediately = useCallback((nextIdentity: BrandIdentity) => {
+    if (!commitIdentities(
+      identitiesRef.current.map((identity) => identity.id === nextIdentity.id ? nextIdentity : identity)
+    )) throw new Error('The project could not be saved locally. Your changes remain available in this session.');
+    setPendingIdentities((current) => {
+      if (!current[nextIdentity.id]) return current;
+      const nextPendingIdentities = { ...current };
+      delete nextPendingIdentities[nextIdentity.id];
+      return nextPendingIdentities;
+    });
+  }, [commitIdentities, identitiesRef]);
+
+  function ignoreIdentityChanges(identityId: string) {
+    setPendingIdentities((current) => {
+      const nextPendingIdentities = { ...current };
+      delete nextPendingIdentities[identityId];
+      return nextPendingIdentities;
+    });
+  }
+
+  function removeIdentity() {
+    if (!activeIdentity || activeIdentity.builtIn) return;
+    const nextIdentities = identities.filter(({ id }) => id !== activeIdentity.id);
+    if (!commitIdentities(nextIdentities)) return;
+    ignoreIdentityChanges(activeIdentity.id);
+    setOpenIdentityIds((current) => current.filter((id) => id !== activeIdentity.id));
+    setActiveFolderId('all');
+    window.localStorage.setItem(ACTIVE_FOLDER_STORAGE_KEY, 'all');
+    selectIdentity(STARTER_BRAND_IDENTITY.id);
+  }
+
+  function announceProjectTabMove(identityId: string, position: number, total: number) {
+    const identity = identityById.get(identityId);
+    if (!identity) return;
+    setTabOrderAnnouncement(
+      gt('Moved {name} to position {position} of {total}.', {
+        name: identity.name,
+        position,
+        total,
+      })
+    );
+  }
+
+  function commitProjectTabReorder(
+    sourceId: string,
+    targetId: string,
+    placement: ProjectTabPlacement
+  ) {
+    if (sourceId === targetId) return;
+    const visibleIdentityIds = visibleIdentities.map(({ id }) => id);
+    const reorderedVisibleIds = reorderProjectTabs(
+      visibleIdentityIds,
+      sourceId,
+      targetId,
+      placement
+    );
+    const nextPosition = reorderedVisibleIds.indexOf(sourceId);
+    if (nextPosition < 0) return;
+
+    setOpenIdentityIds((current) =>
+      reorderProjectTabs(current, sourceId, targetId, placement)
+    );
+    announceProjectTabMove(sourceId, nextPosition + 1, reorderedVisibleIds.length);
+  }
+
+  function moveProjectTab(identityId: string, direction: -1 | 1) {
+    const currentIndex = visibleIdentities.findIndex(({ id }) => id === identityId);
+    const targetIdentity = visibleIdentities[currentIndex + direction];
+    if (currentIndex < 0 || !targetIdentity) return;
+    commitProjectTabReorder(
+      identityId,
+      targetIdentity.id,
+      direction < 0 ? 'before' : 'after'
+    );
+  }
+
+
+  function openProjectTabContext(
+    identityId: string,
+    position: StudioContextMenuPosition
+  ) {
+    setProjectTabMenu({
+      identityId,
+      position: {
+        ...position,
+        anchor: document.getElementById(`project-tab-trigger-${identityId}`),
+      },
+    });
+  }
+
+  function renderProjectTab(identity: BrandIdentity) {
+    const selected = identity.id === activeIdentity?.id;
+    return (
+      <div
+        aria-label={identity.name}
+        className={`project-tab relative flex items-center gap-2 border border-b-0 py-0 pr-1.5 pl-3 text-xs ${
+          selected
+            ? 'border-border bg-background text-foreground'
+            : 'border-border/65 bg-muted/25 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+        }`}
+        data-project-id={identity.id}
+        data-renaming={renamingIdentityId === identity.id ? 'true' : undefined}
+        data-selected={selected ? 'true' : 'false'}
+        data-studio-context-trigger='project-tab'
+        key={identity.id}
+        onClick={(event) => handleProjectTabClick(event, identity.id)}
+        onClickCapture={(event) => handleProjectTabClickCapture(event, identity.id)}
+        onContextMenu={(event) => {
+          if (event.target instanceof Element && event.target.closest('input, textarea, [contenteditable]')) return;
+          event.preventDefault();
+          openProjectTabContext(identity.id, contextMenuPositionFromEvent(event));
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'F2') {
+            event.preventDefault();
+            beginProjectRename(identity.id);
+          } else if (event.altKey && event.key === 'ArrowLeft') {
+            event.preventDefault();
+            moveProjectTab(identity.id, -1);
+          } else if (event.altKey && event.key === 'ArrowRight') {
+            event.preventDefault();
+            moveProjectTab(identity.id, 1);
+          } else if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+            event.preventDefault();
+            openProjectTabContext(identity.id, contextMenuPositionFromElement(event.currentTarget));
+          }
+        }}
+        onLostPointerCapture={handleProjectTabPointerCancel}
+        onPointerCancel={handleProjectTabPointerCancel}
+        onPointerDown={(event) => handleProjectTabPointerDown(event, identity.id)}
+        onPointerEnter={() => warmProjectWorkspace(identity.id)}
+        onPointerMove={handleProjectTabPointerMove}
+        onPointerUp={handleProjectTabPointerEnd}
+        onFocus={() => warmProjectWorkspace(identity.id)}
+        role='group'
+        title={identity.name}
+      >
+        {renamingIdentityId === identity.id ? (
+          <div className='project-tab-editor flex min-w-0 flex-1 items-center gap-2'>
+            <ProjectTabMark identity={identity} selected={selected} />
+            <span className='project-tab-separator font-mono text-muted-foreground' aria-hidden='true'>/</span>
+            <input
+              aria-label={gt('Rename {name}', { name: identity.name })}
+              className='project-tab-name min-w-0 flex-1 bg-transparent font-medium outline-none'
+              id={`project-tab-trigger-${identity.id}`}
+              onBlur={() => finishProjectRename(identity.id, true)}
+              onChange={(event) => setProjectNameDraft(event.target.value)}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  finishProjectRename(identity.id, true);
+                } else if (event.key === 'Escape') {
+                  event.preventDefault();
+                  finishProjectRename(identity.id, false);
+                }
+              }}
+              ref={projectNameInputRef}
+              spellCheck={false}
+              title={gt('Press Enter to save or Escape to cancel')}
+              value={projectNameDraft}
+            />
+          </div>
+        ) : (
+          <button
+            aria-current={selected ? 'page' : undefined}
+            aria-label={gt('Open {name} project', { name: identity.name })}
+            aria-keyshortcuts='Alt+ArrowLeft Alt+ArrowRight Shift+F10 F2'
+            className='flex min-w-0 flex-1 items-center gap-2 text-left'
+            id={`project-tab-trigger-${identity.id}`}
+            onClick={() => {
+              setProjectTabMenu(null);
+              selectIdentity(identity.id);
+            }}
+            onDoubleClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              beginProjectRename(identity.id);
+            }}
+            type='button'
+          >
+            <ProjectTabMark identity={identity} selected={selected} />
+            <span className='project-tab-separator font-mono text-muted-foreground' aria-hidden='true'>/</span>
+            <span className={`project-tab-name truncate ${selected ? 'font-medium text-foreground' : ''}`}>
+              {identity.name}
+            </span>
+          </button>
+        )}
+        {selected && renamingIdentityId !== identity.id ? (
+          <button
+            aria-label={gt('Rename {name}', { name: identity.name })}
+            className='project-tab-rename'
+            onClick={() => beginProjectRename(identity.id)}
+            title={gt('Rename project')}
+            type='button'
+          >
+            <FilePenLine aria-hidden='true' />
+          </button>
+        ) : null}
+        <button
+          aria-label={gt('Close {name} tab', { name: identity.name })}
+          className='project-tab-close'
+          onClick={() => closeIdentity(identity.id)}
+          title={gt('Close tab')}
+          type='button'
+        >
+          <X aria-hidden='true' />
+        </button>
+      </div>
+    );
+  }
+
+  if (!activeTool || !activeIdentity) {
+    return null;
+  }
+
+  return (
+    <StudioExportProgressProvider>
+    <main
+      className='studio-app h-dvh overflow-hidden bg-background text-foreground'
+      data-studio-accent={resolvedAppearance.accent}
+      data-studio-tooltips={resolvedAppearance.tooltips}
+      data-studio-canvas={resolvedAppearance.canvas}
+      data-studio-contrast={resolvedAppearance.contrast}
+      data-studio-corners={resolvedAppearance.corners}
+      data-studio-density={resolvedAppearance.density}
+      data-studio-font={resolvedAppearance.font}
+      data-studio-motion={resolvedAppearance.motion}
+      data-theme={resolvedAppearance.theme}
+      data-resolved-theme={resolvedTheme}
+      style={customAccentStyle(resolvedAppearance)}
+    >
+      {retainedWorkspaceIdentities.map((identity) => (
+        <BrandFontFaces identity={identity} key={identity.id} />
+      ))}
+      <StudioAppHeader
+        activeToolId={activeToolId}
+        appearance={resolvedAppearance}
+        onAppearanceChange={handleAppearanceChange}
+        onCommandOpen={openCommandSearch}
+        onThemeToggle={toggleTheme}
+        onToolSelect={handleToolSelect}
+        resolvedTheme={resolvedTheme}
+      />
+
+      <div className='project-tabs-shell bg-background'>
+        <SidebarDitherPanel
+          icons={[<Folder />, <Palette />, <Film />, <Sticker />]}
+          variant='studio'
+        />
+        <div
+          className='app-navbar project-tabs flex min-w-0 items-end gap-2 px-2'
+          data-tab-density={projectTabDensity}
+        >
+          <div className='project-tabs-rail min-w-0 flex-1 self-stretch'>
+            <button
+              aria-label={gt('Scroll project tabs left')}
+              className='project-tabs-scroll-cue project-tabs-scroll-cue--left'
+              data-visible={tabScrollState.canScrollLeft ? 'true' : 'false'}
+              disabled={!tabScrollState.canScrollLeft}
+              onClick={() => scrollProjectTabs(-1)}
+              type='button'
+            >
+              <ChevronLeft aria-hidden='true' />
+            </button>
+            <div
+              className='project-tabs-scroll studio-scroll-area flex min-w-0 items-end gap-2 overflow-x-auto self-stretch'
+              ref={projectTabsScrollRef}
+            >
+              <nav className='project-tabs-tablist flex shrink-0 items-end gap-1.5 self-stretch' aria-label={gt('Brand projects')}>
+                {activeProjectTabIndex >= 0 ? (
+                  <span
+                    aria-hidden='true'
+                    className='project-tab-selection'
+                    ref={projectTabSelectionRef}
+                    style={{
+                      transform: `translate3d(calc(${activeProjectTabIndex} * (var(--project-tab-width) + var(--project-tab-gap))), 0, 0)`,
+                    }}
+                  />
+                ) : null}
+                {visibleIdentities.map(renderProjectTab)}
+              </nav>
+              <span aria-live='polite' className='sr-only'>
+                {tabOrderAnnouncement}
+              </span>
+              {visibleIdentities.length === 0 ? (
+                <span className='mb-2 shrink-0 px-2 text-xs text-muted-foreground'>
+                  <T>No brands in this folder</T>
+                </span>
+              ) : null}
+              <StudioCreateProjectMenu
+                disabled={!identitiesReady}
+                identities={resolvedIdentities}
+                onCreated={({ identity, toolId }) => {
+                  activateCreatedIdentity(identity);
+                  selectTool(toolId);
+                }}
+              />
+            </div>
+            <button
+              aria-label={gt('Scroll project tabs right')}
+              className='project-tabs-scroll-cue project-tabs-scroll-cue--right'
+              data-visible={tabScrollState.canScrollRight ? 'true' : 'false'}
+              disabled={!tabScrollState.canScrollRight}
+              onClick={() => scrollProjectTabs(1)}
+              type='button'
+            >
+              <ChevronRight aria-hidden='true' />
+            </button>
+          </div>
+          <div className='project-tabs-actions ml-auto flex h-9 shrink-0 self-center items-center gap-1.5 border-l border-border pl-2'>
+            <StudioActionMenu label={gt('Project')} icon={<BriefcaseBusiness aria-hidden='true' />} disabled={!identitiesReady} loading={duplicatingProject} detail={activeIdentity.name} sections={[
+              { items: [
+                { id: 'duplicate', label: gt('Duplicate active project'), description: gt('Copy every workspace, asset, and saved checkpoint.'), icon: <Copy />, onSelect: copyIdentity },
+                { id: 'close-others', label: gt('Close other project tabs'), description: gt('Close tabs without deleting their work.'), icon: <PanelTopClose />, disabled: openIdentityIds.length <= 1, onSelect: closeOtherIdentities },
+              ] },
+              { items: activeIdentity.builtIn ? [] : [{ id: 'delete', label: gt('Delete active project'), danger: true, icon: <Trash2 />, onSelect: () => setDeleteConfirmationId(activeIdentity.id) }] },
+            ]} />
+            <StudioErrorNotice error={projectError} onDismiss={() => setProjectError(null)} title='Project action failed' />
+            <ProjectFolderMenu
+              activeIdentityId={activeIdentity.id}
+              activeFolderId={activeFolderId}
+              folderCounts={folderCounts}
+              identities={resolvedIdentities}
+              onOpenProject={selectIdentity}
+              onSelect={selectProjectFolder}
+              onWarmProject={warmProjectWorkspace}
+              openIdentityIds={openIdentityIds}
+            />
+          </div>
+        </div>
+      </div>
+      <ProjectTabContextMenu
+        activeIdentityId={activeIdentity.id}
+        identity={projectTabMenuIdentity}
+        menu={projectTabMenu}
+        onClose={() => setProjectTabMenu(null)}
+        onCloseOthers={(identityId) => {
+          setOpenIdentityIds([identityId]);
+          selectIdentity(identityId);
+        }}
+        onCloseTab={closeIdentity}
+        onDuplicate={copyIdentityById}
+        onMove={moveProjectTab}
+        onOpen={selectIdentity}
+        onRename={beginProjectRename}
+        openCount={openIdentityIds.length}
+        tabCount={visibleIdentities.length}
+        tabIndex={projectTabMenuIndex}
+      />
+
+      <div className='studio-app-body'>
+        <aside className='app-navbar studio-nav flex min-h-0 flex-col border-r border-border bg-background'>
+          <nav aria-label={gt('Studio help')} className='studio-sidebar-help'>
+            <Button asChild className='h-9 flex-1 justify-start px-2.5' variant='ghost'>
+              <Link aria-label={gt('Docs')} href='/docs'><BookOpen aria-hidden='true' /><span><T>Docs</T></span></Link>
+            </Button>
+            <Button asChild className='h-9 flex-1 justify-start px-2.5' variant='ghost'>
+              <Link aria-label={gt('Quickstart')} href='/docs/getting-started'><Rocket aria-hidden='true' /><span><T>Quickstart</T></span></Link>
+            </Button>
+          </nav>
+          <StudioToolNav activeToolId={activeToolId} onSelect={handleToolSelect} />
+        </aside>
+
+        <section className='studio-workspace min-w-0 overflow-hidden bg-background'>
+          <StudioWorkspaceView
+            fallbackTool={activeTool}
+            identities={retainedWorkspaceIdentities}
+            onIdentityChange={updateIdentity}
+            onIdentitySave={saveIdentityImmediately}
+            openIdentityIds={openIdentityIdSet}
+            pendingIdentities={pendingIdentities}
+            workspace={workspace}
+          />
+        </section>
+      </div>
+      {commandOpen ? (
+        <StudioCommandSearch
+          activeToolId={activeToolId}
+          onClose={closeCommandPalette}
+          onSelect={selectTool}
+        />
+      ) : null}
+      {deleteConfirmationId === activeIdentity.id && !activeIdentity.builtIn ? (
+        <StudioConfirmDialog
+          cancelLabel={gt('Cancel')}
+          confirmLabel={gt('Delete project')}
+          description={gt('{name} is removed from your projects in this browser. This cannot be undone.', { name: activeIdentity.name })}
+          onCancel={() => setDeleteConfirmationId(null)}
+          onConfirm={() => {
+            setDeleteConfirmationId(null);
+            removeIdentity();
+          }}
+          title={gt('Delete {name}?', { name: activeIdentity.name })}
+        />
+      ) : null}
+      {draftSaveFailed && <div className='studio-save-toast' role='alert'>
+        <div className='studio-save-toast-copy'><strong><T>Draft storage is unavailable</T></strong>
+          <span><T>Your latest edits are held in this session. Export your work or free space and retry.</T></span></div>
+        <button type='button' onClick={retryFailedDrafts}><T>Retry saving drafts</T></button>
+      </div>}
+      <StudioSaveToast
+        identityId={activeIdentity.id}
+        onIgnore={ignoreIdentityChanges}
+        onSave={saveIdentityChanges}
+        visible={activeIdentityHasPendingChanges}
+      />
+    </main>
+    </StudioExportProgressProvider>
+  );
+}

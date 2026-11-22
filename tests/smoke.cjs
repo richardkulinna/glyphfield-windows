@@ -44,15 +44,38 @@ async function launch() {
     const typography = source.typography.map((entry) => ({
       ...entry, weight: ({ Display: 700, Accent: 600, Code: 900 })[entry.role] ?? entry.weight,
     }));
-    await studio.invoke('identity.apply', { identity: { typography }, mode: 'merge', save: true });
+    await studio.invoke('identity.apply', { identity: {
+      typography,
+      greetings: ['Hello from the desktop export test'],
+      dossier: { renderingRecipe: ['Place the customer illustration precisely.'] },
+    }, mode: 'merge', save: true });
   });
   await page.evaluate(() => window.glyphfield.studio.invoke('identity.save'));
   const kit = await page.evaluate(async () => {
     const artifact = await window.glyphfield.studio.invoke('identity.export.kit', { format: 'zip' });
-    return { size: artifact.blob.size, head: [...new Uint8Array(await artifact.blob.slice(0, 4).arrayBuffer())] };
+    const bytes = new Uint8Array(await artifact.blob.arrayBuffer());
+    const view = new DataView(bytes.buffer);
+    const decoder = new TextDecoder();
+    let archivedMarkdown;
+    for (let offset = 0; offset + 30 < bytes.length && view.getUint32(offset, true) === 0x04034b50;) {
+      const size = view.getUint32(offset + 18, true);
+      const nameEnd = offset + 30 + view.getUint16(offset + 26, true);
+      const start = nameEnd + view.getUint16(offset + 28, true);
+      const name = decoder.decode(bytes.subarray(offset + 30, nameEnd));
+      if (name.endsWith('/brand.md')) archivedMarkdown = decoder.decode(bytes.subarray(start, start + size));
+      offset = start + size;
+    }
+    const single = await window.glyphfield.studio.invoke('identity.export.kit', { format: 'markdown' });
+    const markdown = await single.blob.text();
+    return {
+      size: bytes.length, head: [...bytes.slice(0, 4)], same: archivedMarkdown === markdown,
+      complete: ['Hello from the desktop export test', 'Place the customer illustration precisely.'].every((marker) => markdown.includes(marker)),
+    };
   });
   assert.ok(kit.size > 1000);
   assert.deepEqual(kit.head, [80, 75, 3, 4]);
+  assert.equal(kit.complete, true);
+  assert.equal(kit.same, true, 'Single download and archived Markdown must match');
   await instance.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
   await page.screenshot({ path: 'test-results/windows-studio.png', timeout: 60000 });
   await instance.close(); instance = null;
@@ -65,6 +88,20 @@ async function launch() {
   assert.deepEqual([weights.Display, weights.Accent, weights.Code], [700, 600, 900]);
   const labs = await page.evaluate(async () => (await fetch('/api/labs')).json());
   assert.ok(JSON.stringify(labs).includes('identity'));
+  const pdfPath = path.join(profile, 'brand-book-test.pdf');
+  await instance.evaluate(({ dialog }, filePath) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath });
+  }, pdfPath);
+  await page.goto(`http://127.0.0.1:43127/studio?tool=brand-book&project=${encodeURIComponent(created.id)}`);
+  await page.waitForFunction(() => {
+    try { return !!JSON.parse(window.glyphfield.studio.readSource()).sections?.length; } catch { return false; }
+  }, null, { timeout: 60000 });
+  await page.getByRole('button', { name: /Export PDF/i }).first().click();
+  const deadline = Date.now() + 90000;
+  while (!fs.existsSync(pdfPath) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 200));
+  const pdf = fs.readFileSync(pdfPath);
+  assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+  assert.ok(pdf.length > 8000, 'Native brand book renderer produced a populated PDF');
   console.log('PASS OFFLINE: packaged launch, isolated renderer, manual update policy, brand creation, ZIP export, persisted project after full restart, local API; public Internet blocked');
 })().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {
   const log = path.join(profile, 'desktop.log');

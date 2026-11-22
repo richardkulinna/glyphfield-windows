@@ -1,3 +1,4 @@
+require('./apply-studio.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 // Specify the fixture input; retain the original assertion and all product code.

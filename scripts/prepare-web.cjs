@@ -12,23 +12,6 @@ if (source.split(anchor).length !== 2 || /output\s*:\s*['"]/.test(source)) {
 }
 fs.writeFileSync(file, source.replace(anchor, `${anchor}\n  output: 'standalone',\n  outputFileTracingRoot: process.cwd(),\n  turbopack: { root: process.cwd() },`));
 
-// Apply the Windows typography policy before Next hashes its production assets.
-function replaceOnce(relative, before, after) {
-  const filename = path.join(vendor, relative);
-  const text = fs.readFileSync(filename, 'utf8');
-  if (text.split(before).length !== 2) {
-    throw new Error(`Review the Windows font-weight adapter: upstream changed ${relative}.`);
-  }
-  fs.writeFileSync(filename, text.replace(before, after));
-}
-replaceOnce('src/lib/typography.ts', 'MAX_VISIBLE_FONT_WEIGHT = 550;', 'MAX_VISIBLE_FONT_WEIGHT = 900;');
-const views = 'src/components/tools/typography/TypographyViews.tsx';
-replaceOnce(views, "import { capVisibleFontWeight }", "import { MAX_VISIBLE_FONT_WEIGHT, capVisibleFontWeight }");
-replaceOnce(views,
-  'Math.min(550, fonts.length ? Math.max(...fonts.map((font) => font.weightMax ?? font.weight)) : 550)',
-  'Math.min(MAX_VISIBLE_FONT_WEIGHT, fonts.length ? Math.max(...fonts.map((font) => font.weightMax ?? font.weight)) : MAX_VISIBLE_FONT_WEIGHT)');
-replaceOnce('src/lib/brandElements.ts',
-  "Math.min(identity.typography.find(({ role }) => role === 'Display')?.weight ?? 550, 550)",
-  "Math.min(identity.typography.find(({ role }) => role === 'Display')?.weight ?? 550, 900)");
+require('./apply-studio.cjs');
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: vendor, encoding: 'utf8' }).trim();
 fs.writeFileSync(path.join(root, 'build-info.json'), JSON.stringify({ upstream: sha, builtAt: new Date().toISOString() }, null, 2));

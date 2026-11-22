@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, shell, utilityProcess, session } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, shell, utilityProcess, session } = require('electron');
 const { autoUpdater } = require('electron-updater');
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
@@ -62,7 +62,26 @@ async function start() {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === 'clipboard-sanitized-write'));
-  window = new BrowserWindow({ width: 1440, height: 940, minWidth: 800, minHeight: 600, show: !smoke, title: 'Glyphfield Windows', webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
+  window = new BrowserWindow({ width: 1440, height: 940, minWidth: 800, minHeight: 600, show: !smoke, title: 'Glyphfield Windows', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
+  ipcMain.handle('brand-book:save-pdf', async (event) => {
+    if (event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame ||
+        new URL(event.senderFrame.url).origin !== origin) throw new Error('Dieses Fenster kann kein Brandbook exportieren.');
+    const { canceled, filePath } = await dialog.showSaveDialog(window, {
+      title: 'Brandbook als PDF speichern',
+      defaultPath: 'Brandbook.pdf',
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (canceled || !filePath) return 'cancelled';
+    const bytes = await event.sender.printToPDF({ printBackground: true, preferCSSPageSize: true, displayHeaderFooter: false });
+    const temporary = path.join(path.dirname(filePath), '.' + require('node:crypto').randomUUID() + '.pdf.tmp');
+    try {
+      await fs.promises.writeFile(temporary, bytes, { flag: 'wx' });
+      await fs.promises.rename(temporary, filePath);
+    } finally {
+      await fs.promises.rm(temporary, { force: true });
+    }
+    return 'saved';
+  });
   window.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:\/\//.test(url) && !url.startsWith(origin + '/')) shell.openExternal(url); return { action: 'deny' }; });
   window.webContents.on('will-navigate', (event, url) => { if (new URL(url).origin !== origin) { event.preventDefault(); if (/^https?:\/\//.test(url)) shell.openExternal(url); } });
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
