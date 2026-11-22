@@ -37,6 +37,15 @@ async function launch() {
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   const created = await page.evaluate(() => window.glyphfield.studio.invoke('identity.project.create', { from: 'starter', name: 'Windows persistence check' }));
   assert.ok(created.id);
+  // Exercise the desktop roles through the same identity pipeline as the editor.
+  await page.evaluate(async () => {
+    const studio = window.glyphfield.studio;
+    const source = JSON.parse(studio.readSource());
+    const typography = source.typography.map((entry) => ({
+      ...entry, weight: ({ Display: 700, Accent: 600, Code: 900 })[entry.role] ?? entry.weight,
+    }));
+    await studio.invoke('identity.apply', { identity: { typography }, mode: 'merge', save: true });
+  });
   await page.evaluate(() => window.glyphfield.studio.invoke('identity.save'));
   const kit = await page.evaluate(async () => {
     const artifact = await window.glyphfield.studio.invoke('identity.export.kit', { format: 'zip' });
@@ -50,6 +59,10 @@ async function launch() {
   page = await launch();
   await page.goto(`http://127.0.0.1:43127/studio?tool=identity&project=${encodeURIComponent(created.id)}`);
   await page.waitForFunction(() => { try { return JSON.parse(window.glyphfield.studio.readSource()).name === 'Windows persistence check'; } catch { return false; } }, null, { timeout: 60000 });
+  const weights = await page.evaluate(() => Object.fromEntries(
+    JSON.parse(window.glyphfield.studio.readSource()).typography.map(({ role, weight }) => [role, weight])
+  ));
+  assert.deepEqual([weights.Display, weights.Accent, weights.Code], [700, 600, 900]);
   const labs = await page.evaluate(async () => (await fetch('/api/labs')).json());
   assert.ok(JSON.stringify(labs).includes('identity'));
   console.log('PASS OFFLINE: packaged launch, isolated renderer, manual update policy, brand creation, ZIP export, persisted project after full restart, local API; public Internet blocked');
