@@ -228,6 +228,10 @@ A logo `slot` replaces that slot in place. `identity.font.add` treats a file who
 
 These routes store nothing. The ZIP files and font files come only from `identity.export.kit` in the browser. See [Endpoint reference](/docs/reference/endpoints#brand-identity).
 
+## Export the brand book
+
+Open **Brand book** and choose **Export PowerPoint**. The browser action `brand-book.export.pptx` downloads all visible pages in reading order. Text, colour samples and rules are editable PowerPoint objects. Each placed logo, icon and photograph is a separate picture. Install the brand fonts on the presentation computer for the intended appearance. The `brand-book.print` action opens the PDF print flow.
+
 ## Limits
 
 | Item | Limit |
@@ -239,4 +243,4 @@ These routes store nothing. The ZIP files and font files come only from `identit
 | Published plans | 4 |
 | Storage | The audit warns when the identity JSON exceeds 3.5 million characters |
 | HTTP request body | 5,250,000 bytes |
-| Font weight | Studio tools display weights up to 550. The schema accepts 100–900. |
+| Font weight | The identity accepts 100–900. Use a face or variable axis that supports the selected weight. |
