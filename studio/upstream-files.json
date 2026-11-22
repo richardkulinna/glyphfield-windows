@@ -30,6 +30,7 @@
   "src/lib/__tests__/expressionDocument.test.ts": "20dc08bd25245756bc9f9f582d830a1dca3e952551ef3ae144160f76d881f15c",
   "src/lib/__tests__/moodboardAuthoring.test.ts": null,
   "src/lib/__tests__/moodboardBoard.test.ts": "e1048d39cec4e3342bf7a52611781e38d325d78cc55f8dff4b42625073a478a1",
+  "src/lib/__tests__/renderFrame.test.ts": "158136181f702b394a8ab6e849a5a8ff8df71098cf3709a0b929242a1b77b5cd",
   "src/lib/__tests__/studioControlSystem.test.ts": "0d232a11d159b15eac9726aed3916086f7539ed354f5ff64f64976096f49d6a1",
   "src/lib/__tests__/studioProjectDuplication.test.ts": "49b76a7b9f86f055ef894b738ba898f58b12205fab74a8529e2502eb587afc12",
   "src/lib/__tests__/typeSystem.test.ts": "0a458eb668c712bc87fbc6ec611d196b840d98061339b48dcaa81f5e01572f23",
