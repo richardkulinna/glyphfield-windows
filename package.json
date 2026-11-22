@@ -1,29 +1,21 @@
 {
-  "name": "glyphfield-windows",
-  "version": "1.0.0",
-  "description": "Independent Windows distribution of Glyphfield",
-  "author": "Richard Kulinna",
+  "name": "glyphfield-browser",
+  "version": "2.0.0",
+  "description": "Portable local-first Glyphfield Studio for the browser",
+  "private": true,
   "license": "MIT",
-  "main": "desktop/main.cjs",
+  "author": "Richard Kulinna",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "start": "electron .",
     "test": "node --test tests/*.test.cjs",
     "prepare:web": "node scripts/prepare-web.cjs",
     "stage:web": "node scripts/stage-web.cjs",
-    "pack": "electron-builder --win --x64 --dir",
-    "dist": "electron-builder --win nsis --x64 --publish never",
-    "smoke": "node tests/smoke.cjs"
+    "pack": "node scripts/package-browser.cjs",
+    "smoke": "node tests/browser-smoke.cjs"
   },
-  "dependencies": { "electron-updater": "6.8.9" },
-  "devDependencies": { "electron": "^42.0.0", "electron-builder": "^26.0.12", "playwright": "^1.62.1" },
-  "build": {
-    "appId": "art.kulinna.glyphfield.windows",
-    "productName": "Glyphfield Windows",
-    "directories": { "output": "dist" },
-    "files": ["desktop/**", "package.json"],
-    "extraResources": [{ "from": "web", "to": "web", "filter": ["**/*", "node_modules/**/*"] }, { "from": "web/node_modules", "to": "web/node_modules", "filter": ["**/*"] }, { "from": "build-info.json", "to": "build-info.json" }],
-    "win": { "target": "nsis", "artifactName": "Glyphfield-Windows-Setup-${version}.${ext}" },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "deleteAppDataOnUninstall": false, "include": "desktop/installer.nsh" },
-    "publish": [{ "provider": "github", "owner": "richardkulinna", "repo": "glyphfield-windows" }]
+  "devDependencies": {
+    "playwright": "1.65.1"
   }
 }

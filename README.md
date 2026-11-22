@@ -1,44 +1,28 @@
-# Glyphfield Windows
+# Glyphfield im Browser
 
-Unabhängige Windows-Ausgabe von [Glyphfield](https://github.com/Kevin-Liu-01/Glyphfield), entwickelt von Kevin Liu. Der Windows-Build kombiniert das Original mit dem hier gepflegten Studio-Editor für Marken, Brandbooks und Moodboards.
+Glyphfield ist ein lokales Markenstudio für Windows x64. Die Browserfassung verbindet [Glyphfield von Kevin Liu](https://github.com/Kevin-Liu-01/Glyphfield) mit den Studio-Erweiterungen dieses Projekts.
 
-## Installation
+## Öffnen
 
-[Aktuelle Windows-Version herunterladen](https://github.com/richardkulinna/glyphfield-windows/releases/latest). Die Datei `Glyphfield-Windows-Setup-….exe` starten und den Installationsschritten folgen. Kein separat installiertes Node.js erforderlich. Der Installer ist derzeit nicht mit einem kommerziellen Windows-Zertifikat signiert.
+1. Lade das ZIP der [aktuellen Browserfassung](https://github.com/richardkulinna/glyphfield-windows/releases/latest) herunter.
+2. Wähle im Explorer **Alle extrahieren**. Bewahre den vollständigen Ordner auf.
+3. Doppelklicke auf **Glyphfield starten.cmd**. Der Starter öffnet das Studio in deinem Standardbrowser. Für deinen Desktop kannst du eine Verknüpfung zu diesem Starter erstellen.
 
-## Updates
+Der lokale Webserver und seine Laufzeit sind im Paket enthalten. Das Studio läuft nach dem Download offline auf deinem PC. Die Adresse ist immer `http://127.0.0.1:43496/studio`. Während der Server läuft, kannst du sie über ein Lesezeichen oder **Studio.html** wieder öffnen. **Glyphfield beenden.cmd** beendet den lokalen Server. Externe Links führen gegebenenfalls aus dem lokalen Studio heraus.
 
-GitHub Actions prüft alle sechs Stunden den Originalentwickler-Zweig `main`. Ein unveränderlicher Commit wird gebaut. Erst wenn Typprüfung, Originaltests, Produktionsbuild und Tests der gepackten Windows-App erfolgreich sind, wird eine neue Version veröffentlicht. Fehler lassen die letzte veröffentlichte Version unangetastet. Zeitpläne können durch GitHub verzögert werden; GitHub kann Zeitpläne öffentlicher, längere Zeit inaktiver Repositories deaktivieren. Der Workflow lässt sich unter Actions auch manuell starten.
+## Projekte und Updates
 
-Die Windows-App prüft beim Start und alle sechs Stunden auf veröffentlichte Windows-Versionen. Installation erfolgt nur auf ausdrücklichen Klick im App-Menü. Während der Arbeit wird keine Version ungefragt installiert.
+Marken, Bearbeitungsstände und Assets liegen im Speicher deines Browserprofils. Öffne das Studio im selben Browser und Profil. Das Löschen der Websitedaten oder ein privates Browserfenster kann den Zugriff auf diese Daten beenden. Sichere wichtige Marken über den Kit-Export.
 
-## Daten und Wiederherstellung
+Für ein Update entpackst du die neue Version in einen eigenen Ordner und öffnest den dortigen Starter. Die feste lokale Adresse erhält den Zugriff auf die Projekte im selben Browserprofil. Die frühere Electron-Ausgabe hat ein eigenes Datenverzeichnis. Ihre installierten Projekte werden durch das Entpacken allein nicht übertragen.
 
-Projekte liegen in `%APPDATA%\Glyphfield Windows`, getrennt von den Programmdateien. Der lokale Ursprung `http://127.0.0.1:43127` bleibt stabil, damit Browserdaten auch nach Updates erreichbar bleiben. Ein belegter Port führt zu einer verständlichen Fehlermeldung, nicht zu einem leeren Ersatzprofil.
+Eine vorbereitete persönliche Migrationssicherung kann lokal als `private/Projekt.glyphfield.json` neben dem Starter abgelegt werden. Der Starter führt beim Öffnen zur Übernahme. Eine bereits bearbeitete Identität lässt sich behalten oder als separate Kopie ergänzen. Der öffentliche Download enthält keine solchen Sicherungen. Herkömmliche Marken-Kits importierst du im Studio.
 
-Unter **App → Update installieren** lädt die App zunächst den bisherigen Installer samt verifizierter SHA-256-Prüfsumme und das neue Update. Erst nach dem vollständigen Beenden der App kopiert ein separater Helfer die geschlossenen Datenbanken. Schlägt diese Sicherung fehl, wird nicht installiert.
+## Entwicklung
 
-**App → Letztes Update zurücknehmen** installiert den gesicherten Vorgänger und stellt dessen Projektdaten wieder her. Neuere Daten bleiben zusätzlich als `before-rollback-…` erhalten. Danach pausieren Update-Prüfungen, bis du manuell wieder nach Updates suchst. Es wird der unmittelbare Vorgänger gesichert; dessen Eignung für jeden individuellen Arbeitsablauf kann kein automatischer Test garantieren.
+- `studio/src/` enthält die Studio-Erweiterungen, `studio/upstream-files.json` die geprüften Upstream-Dateien.
+- `browser/` enthält die lokalen Starter und die Importseite. `desktop/` enthält den Quellstand des früheren Windows-Clients.
+- GitHub Actions prüft Änderungen am Repository und regelmäßig den Upstream-Zweig aus `upstream.json`. Jeder Build verweist auf den exakten Upstream-Commit. Die Veröffentlichung setzt erfolgreiche Tests des Quellcodes und des entpackten ZIPs voraus.
+- Für lokale Builds brauchst du Windows x64, Node.js 24 und die in `vendor/package.json` festgelegte pnpm-Version. Checke das Original nach `vendor/` aus. Führe im Projekt `npm ci` und `npx playwright install chromium --only-shell` aus, danach in `vendor/` den Befehl `pnpm install --frozen-lockfile --node-linker=hoisted`. Es folgen `npm run prepare:web` im Projekt, `npm run build` in `vendor/` und anschließend `npm run stage:web`, `npm test`, `npm run pack` und `npm run smoke` im Projekt. Das Ergebnis liegt in `dist/`.
 
-Falls die Oberfläche nicht startet: Im Windows-Startmenü **Glyphfield Windows - Wiederherstellen** öffnen. Dieser Einstieg startet die Wiederherstellung ohne den Webserver. Auch der Startfehlerdialog bietet die Rücknahme an.
-
-Das App-Menü öffnet Daten und Sicherungen. Externe Dateien und seit der Sicherung noch nicht gespeicherte Änderungen sind nicht Bestandteil der Wiederherstellung. Beim ersten Installieren existiert noch kein Vorgänger. Für das erste Update muss der bisherige Installer auf GitHub erreichbar sein; sonst wird die Installation abgebrochen. Sicherungen werden nicht automatisch gelöscht.
-
-## Entwicklung und eigene Erweiterungen
-
-- `studio/src/`: bearbeitbarer Studio-Quellcode des Windows-Forks. Die Einträge in `studio/upstream-files.json` prüfen vor Tests und Build, ob sich eine übernommene Originaldatei geändert hat.
-- `desktop/`: Electron-Fenster, lokale Serverlaufzeit, Update- und Wiederherstellungsfunktionen.
-- `scripts/`: überprüfte Anpassungen ausschließlich in der temporären Build-Kopie.
-- `tests/`: Desktop-Vertrag und Datenpersistenz.
-- `upstream.json`: Originalrepository und Ausgangsstand.
-- `vendor/`: temporärer Originalcheckout, nicht Bestandteil dieses Repositorys.
-
-Eigene Funktionen möglichst im Desktop-Bereich oder über die öffentliche `window.glyphfield.studio`-Schnittstelle ergänzen. Unvermeidbare Änderungen am Webkern als überprüfbare Build-Patches in `scripts/` halten und mit Regressionstests absichern. Patches müssen bei unpassendem Kontext abbrechen. Keine automatische Konfliktauflösung, kein Überschreiben eigener Änderungen. Beliebige zukünftige Originaländerungen können dennoch eine manuelle Adapteranpassung erfordern.
-
-Für lokale Builds Node.js 24, den im Original gepinnten pnpm und Windows x64 verwenden. `npm ci`, Original nach `vendor` klonen, dort `pnpm install --frozen-lockfile --node-linker=hoisted`, dann `npm run prepare:web`, in `vendor` `npm run build`, anschließend `npm run stage:web`, `npm run pack`, `npm run smoke`, `npm run dist`. `npm run build` bewahrt die für Windows benötigte Abhängigkeitsstruktur. Die CI führt zusätzlich Originaltests und Typprüfung aus. Build-Metadaten enthalten den exakten Originalcommit.
-
-Original und Windows-Hülle stehen unter MIT. Original-Lizenz und Drittlizenzen werden mit dem Programm ausgeliefert.
-
-### Testanpassungen
-
-Die Originaltests laufen unter Linux, da mehrere Tests POSIX-Dateipfade voraussetzen. Zwei veraltete Testannahmen werden ausschließlich in der temporären Testkopie angepasst: Der Radius-Test erhält ausdrücklich seine erwartete Eingabe von 6 Pixeln; der Moodboard-Test überprüft echte Bildassets und schließt Bildschirmaufnahmen aus, statt ausschließlich auf das inzwischen unvollständige ID-Präfix `library-` zu vertrauen. Keine dieser Anpassungen verändert die ausgelieferte Anwendung. Weitere Testfehler blockieren die Veröffentlichung.
+Die Lizenzdateien von Glyphfield, Node.js und den eingebundenen Komponenten liegen im Paket.

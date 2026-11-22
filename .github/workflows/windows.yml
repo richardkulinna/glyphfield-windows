@@ -1,4 +1,4 @@
-name: Windows release and upstream updates
+name: Portable browser release and upstream updates
 on:
   push:
     branches: [main]
@@ -28,13 +28,13 @@ jobs:
             const config = require('./upstream.json');
             const [owner, repo] = config.repository.split('/');
             const { data } = await github.rest.repos.getCommit({ owner, repo, ref: config.branch });
-            const marker = `Upstream: ${data.sha}\nDesktop: ${context.sha}`;
+            const marker = `Upstream: ${data.sha}\nBrowser: ${context.sha}`;
             let previous = '';
             try { previous = (await github.rest.repos.getLatestRelease(context.repo)).data.body || ''; }
             catch (e) { if (e.status !== 404) throw e; }
             core.setOutput('changed', !previous.includes(marker));
             core.setOutput('sha', data.sha);
-            core.setOutput('version', `1.0.${context.runNumber}`);
+            core.setOutput('version', `2.0.${context.runNumber}`);
   validate:
     needs: detect
     if: needs.detect.outputs.changed == 'true'
@@ -70,8 +70,9 @@ jobs:
     timeout-minutes: 60
     env:
       NEXT_TELEMETRY_DISABLED: '1'
-      NEXT_PUBLIC_STUDIO_URL: http://127.0.0.1:43127
+      NEXT_PUBLIC_STUDIO_URL: http://127.0.0.1:43496
       NODE_OPTIONS: --max-old-space-size=6144
+      GLYPHFIELD_VERSION: ${{ needs.detect.outputs.version }}
     steps:
       - name: Preserve upstream line endings
         run: git config --global core.autocrlf false
@@ -89,7 +90,7 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - run: npm version ${{ needs.detect.outputs.version }} --no-git-tag-version
+      - run: npx playwright install chromium --only-shell
       - run: npm test
       - uses: pnpm/action-setup@v4
         with:
@@ -103,30 +104,18 @@ jobs:
       - run: npm run stage:web
       - run: npm run pack
       - run: npm run smoke
-      - run: npm run dist
-      - name: Verify actual Windows installer
-        timeout-minutes: 6
-        shell: pwsh
-        run: |
-          $installer = (Get-ChildItem dist/*Setup*.exe).FullName
-          $result = Start-Process -FilePath $installer -ArgumentList '/S', '/D=C:\GlyphfieldTestInstall' -WindowStyle Hidden -Wait -PassThru
-          if ($result.ExitCode -ne 0) { throw "Installer failed: $($result.ExitCode)" }
-          $env:GLYPHFIELD_TEST_EXE = 'C:\GlyphfieldTestInstall\Glyphfield Windows.exe'
-          npm run smoke
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-release
+          name: browser-release
           path: |
-            dist/*.exe
-            dist/*.blockmap
-            dist/latest.yml
+            dist/*.zip
+            dist/*.sha256
             build-info.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-test-evidence
+          name: browser-test-evidence
           path: test-results/
   publish:
     needs: [detect, validate, build]
@@ -136,7 +125,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: windows-release
+          name: browser-release
           path: release
       - uses: actions/github-script@v7
         env:
@@ -148,8 +137,8 @@ jobs:
             const path = require('path');
             const version = process.env.VERSION;
             const { data: release } = await github.rest.repos.createRelease({ ...context.repo,
-              tag_name: `v${version}`, target_commitish: context.sha, name: `Glyphfield Windows ${version}`, draft: true,
-              body: `Upstream: ${process.env.UPSTREAM_SHA}\nDesktop: ${context.sha}\n\nWindows x64 installer. Automatic update checks; installation only on request. Validated: upstream tests, typecheck, production build, packaged startup, project persistence and ZIP export.\n\nIndependent Windows distribution; not an official upstream release.` });
+              tag_name: `v${version}`, target_commitish: context.sha, name: `Glyphfield Browser ${version}`, draft: true,
+              body: `Upstream: ${process.env.UPSTREAM_SHA}\nBrowser: ${context.sha}\n\nOffline browser edition for Windows x64. Extract the whole ZIP, then double-click Glyphfield starten.cmd. The local server and Node runtime are bundled. Keep using the same browser profile to retain your projects across updates. Tested from the extracted archive for start, persistence, Markdown, kit and PDF exports.\n\nIndependent distribution of Glyphfield.` });
             for (const file of fs.readdirSync('release', { recursive: true })) {
               const full = path.join('release', file);
               if (fs.statSync(full).isFile()) await github.rest.repos.uploadReleaseAsset({ ...context.repo, release_id: release.id, name: path.basename(file), data: fs.readFileSync(full) });

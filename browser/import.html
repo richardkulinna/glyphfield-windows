@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Projekt übernehmen – Glyphfield</title>
+<style>
+:root{font:16px/1.55 system-ui,sans-serif;color-scheme:light dark;--ink:#19202a;--paper:#f6f6f3;--surface:#fff;--line:#cbd0d3;--accent:#2542b0}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink)}main{margin:clamp(24px,9vh,100px) auto;padding:0 24px;max-width:700px}header{font-weight:700;margin-bottom:28px}section{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:clamp(20px,4vw,38px)}h1{font-size:clamp(26px,5vw,38px);letter-spacing:-.045em;line-height:1.1;margin:0 0 16px}p{margin:10px 0 20px}input{display:block;max-width:100%;font:inherit}button,.link{font-family:inherit;font-size:1rem;font-weight:600;display:inline-block;border:1px solid var(--line);border-radius:8px;padding:9px 14px;margin:6px 6px 0 0;cursor:pointer}button{background:var(--accent);color:white}button:disabled{opacity:.55;cursor:wait}.link{color:var(--ink);text-decoration:none;background:var(--surface)}#status{white-space:pre-line;overflow-wrap:anywhere}#status:empty{display:none}[hidden]{display:none!important}button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid #7291ff;outline-offset:3px}@media(prefers-color-scheme:dark){:root{--ink:#e8ebef;--paper:#15191e;--surface:#1e242a;--line:#48535c;--accent:#324faf}}
+</style></head>
+<body><main><header>Glyphfield</header><section><h1>Projekt übernehmen</h1><p>Öffne deine private Projektsicherung in diesem Browser. Die Markenfelder, eingebetteten Dateien und gesicherten Entwürfe bleiben auf deinem Gerät.</p>
+<label for="file">Private Projektsicherung (.glyphfield.json)</label><input id="file" type="file" accept=".json,application/json">
+<p role="status" id="status" aria-live="polite"></p><div id="choices" hidden><button type="button" id="copy">Sicherung als neues Projekt übernehmen</button><button type="button" id="keep" class="link">Vorhandenes Projekt öffnen</button></div><a href="/studio" class="link">Zum Studio</a>
+</section></main>
+<script>
+'use strict';
+const registryKey='glyphfield-projects-v1';
+const schemas=new Map([
+  ['glyphfield-saved-designs',{name:'designs',key:'key'}],
+  ['glyphfield-asset-library',{name:'converted-assets',key:'id'}],
+  ['glyphfield-shader-frames',{name:'frames',key:'id'}],
+]);
+const file=document.querySelector('#file'), choices=document.querySelector('#choices'), status=document.querySelector('#status');
+let selected, busy=false;
+function fail(message){throw new Error(message)}
+function report(error){status.textContent='Übernahme angehalten. '+error.message; choices.hidden=true;}
+function registry(){const list=JSON.parse(localStorage.getItem(registryKey)||'[]');if(!Array.isArray(list))fail('Der bestehende Projektkatalog ist nicht lesbar.');return list;}
+function scoped(key,id){return ['glyphfield-draft-v1:','glyphfield-active-saved-design-v1:','glyphfield-saved-designs-v1:','glyphfield-autosave-recovery-v1:glyphfield-saved-designs-v1:'].some(prefix=>key.startsWith(prefix+id+':'));}
+function validate(data){
+  const id=data?.identity?.id;
+  if(data?.format!=='glyphfield-private-project/1'||typeof id!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}$/.test(id)||typeof data.identity.name!=='string'||!Array.isArray(data.identity.colors)||!Array.isArray(data.identity.assets)||!Array.isArray(data.identity.typography)||!data.storage||typeof data.storage!=='object'||Array.isArray(data.storage)||!Array.isArray(data.stores))fail('Bitte eine vollständige Glyphfield-Projektsicherung auswählen.');
+  for(const [key,value] of Object.entries(data.storage))if(!scoped(key,id)||typeof value!=='string')fail('Die Sicherung enthält eine fremde Projekteinstellung.');
+  const groups=new Set();
+  for(const group of data.stores){
+    const schema=schemas.get(group.db);
+    if(!schema||groups.has(group.db)||schema.name!==group.store||!Array.isArray(group.records))fail('Das Format des Projektspeichers wird nicht unterstützt.');
+    groups.add(group.db);
+    const seen=new Set();
+    for(const row of group.records){const key=row?.[schema.key];if(typeof key!=='string'||!key||seen.has(key))fail('Ein Dateieintrag hat keinen eindeutigen Schlüssel.');seen.add(key);
+      if(schema.name==='designs'&&(!row.workspaceKey?.startsWith('glyphfield-saved-designs-v1:'+id+':')||!row.design?.id||key!==row.workspaceKey+':'+row.design.id))fail('Eine Designversion gehört zu einem anderen Projekt.');
+      if(schema.name==='frames'&&!(row.pngBytes instanceof ArrayBuffer))fail('Ein gespeichertes Bild ist unvollständig.');
+    }
+  }
+}
+function database(name){
+  const schema=schemas.get(name);
+  return new Promise((resolve,reject)=>{const req=indexedDB.open(name,1);
+    req.onupgradeneeded=()=>{const store=req.result.createObjectStore(schema.name,{keyPath:schema.key});if(schema.name==='designs')store.createIndex('workspaceKey','workspaceKey',{unique:false});};
+    req.onblocked=()=>{status.textContent='Bitte andere Glyphfield-Tabs schließen, damit der Projektspeicher geöffnet werden kann.'};
+    req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
+  });
+}
+function sameRecord(x,y){
+  if(x instanceof ArrayBuffer&&y instanceof ArrayBuffer){const a=new Uint8Array(x),b=new Uint8Array(y);return a.length===b.length&&a.every((v,i)=>v===b[i]);}
+  if(x===y)return true;
+  if(!x||!y||typeof x!=='object'||typeof y!=='object')return false;
+  const keys=Object.keys(x);return keys.length===Object.keys(y).length&&keys.every(k=>Object.hasOwn(y,k)&&sameRecord(x[k],y[k]));
+}
+async function addRows(group,rows){
+  const db=await database(group.db),schema=schemas.get(group.db);
+  try{return await new Promise((resolve,reject)=>{const tx=db.transaction(schema.name,'readwrite'),store=tx.objectStore(schema.name),inserted=[];let reason;
+    tx.oncomplete=()=>resolve(inserted);tx.onabort=()=>reject(reason||tx.error||Error('Dateispeicher konnte nicht geschrieben werden.'));
+    for(const row of rows){const key=row[schema.key],req=store.get(key);
+      req.onsuccess=()=>{if(req.result===undefined){store.add(row);inserted.push(key);}
+        else if(!sameRecord(req.result,row)){reason=Error('Ein Dateischlüssel ist schon mit anderem Inhalt belegt. Bestehende Dateien wurden geschützt.');tx.abort();}
+      };
+    }
+  });}finally{db.close()}
+}
+async function undoRows(group,keys){if(!keys.length)return;const db=await database(group.db);try{await new Promise((resolve,reject)=>{const tx=db.transaction(group.store,'readwrite'),store=tx.objectStore(group.store);for(const key of keys)store.delete(key);tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});}finally{db.close()}}
+function projectUrl(id){return '/studio?tool=identity&project='+encodeURIComponent(id);}
+function go(id){location.replace(projectUrl(id));}
+function remember(id){try{localStorage.setItem(selected.marker,id);}catch{}}
+function mapped(key,from,to){return key.replace(':'+from+':',':'+to+':');}
+async function restore(copy){
+  if(busy)return;busy=true;choices.hidden=true;file.disabled=true;
+  try{
+    const task=async()=>{
+      const {data,marker}=selected,origin=data.identity.id,known=registry(),previous=localStorage.getItem(marker);
+      if(previous&&known.some(p=>p.id===previous)){go(previous);return;}
+      const exists=known.some(p=>p.id===origin);
+      if(exists&&!copy){status.textContent='In diesem Browser gibt es bereits ein Projekt mit dieser Kennung. Du kannst damit weiterarbeiten oder die Sicherung als separate Kopie öffnen.';choices.hidden=false;return;}
+      const target=copy?crypto.randomUUID():origin, name=data.identity.name;
+      status.textContent='Markendaten und Designversionen werden übernommen …';
+      const added=[],written=[];
+      try{
+        for(const group of data.stores){if(!group.records.length)continue;
+          const rows=group.store==='designs'&&target!==origin?group.records.map(row=>{const workspaceKey=mapped(row.workspaceKey,origin,target);return {...row,workspaceKey,key:workspaceKey+':'+row.design.id}}):group.records;
+          const keys=await addRows(group,rows);added.push([group,keys]);
+        }
+        for(const [from,value] of Object.entries(data.storage)){const key=mapped(from,origin,target),prior=localStorage.getItem(key);
+          if(prior===value)continue;if(prior!==null)fail('Es existiert eine abweichende Entwurfsfassung. Bitte den bestehenden Stand sichern.');
+          localStorage.setItem(key,value);written.push(key);}
+        const latest=registry();if(latest.some(i=>i.id===target))fail('Das Projekt wurde inzwischen in einem anderen Tab geöffnet. Bitte erneut versuchen.');
+        let restored=data.identity;if(copy){let suffix=1;let alias=name+' (Import)';while(latest.some(i=>i.name===alias))alias=name+' (Import '+(++suffix)+')';restored={...restored,id:target,name:alias,builtIn:false,kind:'custom'};}
+        localStorage.setItem(registryKey,JSON.stringify([...latest,restored]));
+      }catch(error){
+        for(const key of written)localStorage.removeItem(key);
+        for(const [group,keys] of added.reverse())await undoRows(group,keys);
+        if(error.name==='QuotaExceededError')fail('Der lokale Browserspeicher ist voll. Die bestehenden Projekte bleiben erhalten. Öffne die Sicherung in einem separaten normalen Browserprofil.');
+        throw error;
+      }
+      remember(target);go(target);
+    };
+    if(navigator.locks)await navigator.locks.request('glyphfield-private-project-import',task);else await task();
+  }catch(error){report(error)}finally{busy=false;file.disabled=false;}
+}
+async function read(bytes){
+  const hash=await crypto.subtle.digest('SHA-256',bytes);
+  const marker='glyphfield-private-import-v1:'+Array.from(new Uint8Array(hash),v=>v.toString(16).padStart(2,'0')).join('');
+  const data=JSON.parse(new TextDecoder().decode(bytes),(key,v)=>{
+    if(key==='pngBytes'&&v&&typeof v.base64ArrayBuffer==='string')return Uint8Array.from(atob(v.base64ArrayBuffer),c=>c.charCodeAt(0)).buffer;
+    return v;
+  });
+  validate(data);selected={data,marker};await restore(false);
+}
+file.addEventListener('change',async()=>{try{choices.hidden=true;if(file.files[0])await read(await file.files[0].arrayBuffer());}catch(error){report(error)}});
+document.querySelector('#copy').onclick=()=>restore(true);
+document.querySelector('#keep').onclick=()=>{if(selected){const id=selected.data.identity.id;if(registry().some(p=>p.id===id)){remember(id);go(id);}}};
+(async()=>{try{
+  const token=new URLSearchParams(location.hash.slice(1)).get('private');if(!token)return;
+  history.replaceState(null,'',location.pathname);
+  const match=/^(\d{1,5})\.([a-zA-Z0-9_-]{22,128})$/.exec(token);
+  if(location.hostname!=='127.0.0.1'||!match||Number(match[1])>65535||Number(match[1])<1)fail('Ungültiger lokaler Importlink.');
+  status.textContent='Private Sicherung wird geöffnet …';
+  const response=await fetch('http://127.0.0.1:'+match[1]+'/'+match[2],{cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',redirect:'error'});
+  if(!response.ok)fail('Lokaler Importlink abgelaufen. Öffne die Sicherung oben über die Dateiauswahl.');
+  await read(await response.arrayBuffer());
+}catch(error){report(error)}})();
+</script></body></html>
