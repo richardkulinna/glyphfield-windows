@@ -119,6 +119,8 @@ export function RangeField({
   label,
   max,
   min,
+  openMax = false,
+  openMin = false,
   onChange,
   step = 1,
   suffix = '',
@@ -127,17 +129,19 @@ export function RangeField({
   label: ReactNode;
   max: number;
   min: number;
+  openMax?: boolean;
+  openMin?: boolean;
   onChange: (value: number) => void;
   step?: number;
   suffix?: string;
   value: number;
 }) {
-  const resolvedValue = Math.min(value, max);
+  const resolvedValue = openMax ? value : Math.min(value, max);
   const rangeLabelId = useId();
   return (
     <label htmlFor={`${rangeLabelId}-input`} className='brand-identity-range'>
       <StudioRangeLabel id={rangeLabelId} label={label} value={<output>{resolvedValue}{suffix}</output>} />
-      <StudioRange id={`${rangeLabelId}-input`} aria-labelledby={rangeLabelId} max={max} min={min} onChange={(event) => onChange(Number(event.target.value))} step={step} value={resolvedValue} />
+      <StudioRange openMax={openMax} openMin={openMin} id={`${rangeLabelId}-input`} aria-labelledby={rangeLabelId} max={max} min={min} onValueCommit={onChange} onChange={(event) => onChange(Number(event.target.value))} step={step} value={resolvedValue} />
     </label>
   );
 }

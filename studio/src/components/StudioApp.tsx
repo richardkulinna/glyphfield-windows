@@ -47,8 +47,8 @@ import {
 } from '@/components/ui/SolidIcons';
 
 import { useAppTheme } from '@/components/AppThemeProvider';
+import { BrandPaletteContext } from '@/components/ui/BrandPaletteContext';
 import BrandFontFaces from '@/components/BrandFontFaces';
-import GitHubStarButton from '@/components/GitHubStarButton';
 import SidebarDitherPanel from '@/components/SidebarDitherPanel';
 import StudioCommandPalette from '@/components/StudioCommandPalette';
 import StudioConfirmDialog from '@/components/StudioConfirmDialog';
@@ -83,6 +83,7 @@ import {
 } from '@/lib/brandIdentity';
 import { colorContrastRatio, hexToHslChannels, normalizeHexOrFallback } from '@/lib/color';
 import { PRODUCT_BRAND } from '@/lib/productBrand';
+import { mergeBrandMedia, type AddBrandMedia } from '@/lib/brandMedia';
 import { registerBrandProjectHost } from '@/lib/brandProjectHost';
 import {
   filterStudioTools,
@@ -861,6 +862,7 @@ export const StudioWorkspacePanels = memo(function StudioWorkspacePanels({
   activeTool,
   activeToolId,
   hasPendingIdentityChanges,
+  onAddAssets,
   onIdentityChange,
   onIdentitySave,
 }: {
@@ -869,6 +871,7 @@ export const StudioWorkspacePanels = memo(function StudioWorkspacePanels({
   activeTool: StudioTool;
   activeToolId: StudioToolId;
   hasPendingIdentityChanges: boolean;
+  onAddAssets?: AddBrandMedia;
   onIdentityChange: (identity: BrandIdentity) => void;
   onIdentitySave: (identity: BrandIdentity) => void;
 }) {
@@ -914,6 +917,7 @@ export const StudioWorkspacePanels = memo(function StudioWorkspacePanels({
       <StudioToolWorkspace
         hasPendingIdentityChanges={hasPendingIdentityChanges}
         identity={activeIdentity}
+        onAddAssets={onAddAssets}
         onIdentityChange={onIdentityChange}
         onIdentitySave={onIdentitySave}
         tool={tool}
@@ -954,6 +958,7 @@ export const StudioWorkspacePanels = memo(function StudioWorkspacePanels({
               active={renderActive}
               hasPendingIdentityChanges={hasPendingIdentityChanges}
               identity={activeIdentity}
+              onAddAssets={onAddAssets}
               onIdentityChange={onIdentityChange}
               onIdentitySave={onIdentitySave}
               tool={tool}
@@ -990,9 +995,9 @@ export const StudioWorkspacePanels = memo(function StudioWorkspacePanels({
   }
 
   return (
-    <div className='studio-workspace-panel studio-workspace-panel--persistent-labs'>
-      {layers}
-    </div>
+    <BrandPaletteContext.Provider value={activeIdentity.colors}>
+      <div className='studio-workspace-panel studio-workspace-panel--persistent-labs'>{layers}</div>
+    </BrandPaletteContext.Provider>
   );
 });
 
@@ -1041,6 +1046,7 @@ function useDeferredWorkspace(
 function StudioWorkspaceView({
   fallbackTool,
   identities,
+  onAddAssets,
   onIdentityChange,
   onIdentitySave,
   openIdentityIds,
@@ -1049,6 +1055,7 @@ function StudioWorkspaceView({
 }: {
   fallbackTool: StudioTool;
   identities: readonly BrandIdentity[];
+  onAddAssets?: AddBrandMedia;
   onIdentityChange: (identity: BrandIdentity) => void;
   onIdentitySave: (identity: BrandIdentity) => void;
   openIdentityIds: ReadonlySet<string>;
@@ -1078,6 +1085,7 @@ function StudioWorkspaceView({
             activeTool={workspace.tool ?? fallbackTool}
             activeToolId={workspace.toolId}
             hasPendingIdentityChanges={Boolean(pendingIdentities[identity.id])}
+            onAddAssets={onAddAssets}
             onIdentityChange={onIdentityChange}
             onIdentitySave={onIdentitySave}
           />
@@ -1269,10 +1277,9 @@ const StudioAppHeader = memo(function StudioAppHeader({
         >
           <Search className='size-4 shrink-0 text-muted-foreground' aria-hidden='true' />
           <span className='min-w-0 flex-1 truncate text-sm text-muted-foreground'><T>Search Studio tools…</T></span>
-          <kbd className='hidden border border-border px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline'>⌘K</kbd>
+          <kbd className='hidden border border-border px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline'>Ctrl / ⌘ K</kbd>
         </button>
         <div className='studio-appearance-toolbar ml-auto flex shrink-0 items-center gap-1.5'>
-          <GitHubStarButton className='studio-github-star-button' />
           <Button asChild size='icon-sm' title={gt('Documentation')} variant='outline'>
             <Link aria-label={gt('Open documentation')} href='/docs'>
               <BookOpen aria-hidden='true' />
@@ -1603,9 +1610,27 @@ export default function StudioApp() {
       setProjectError('Local storage could not save this change. Keep the app open, export your work, free storage and retry.');
       return false;
     }
+    identitiesRef.current = nextIdentities;
     setIdentities(nextIdentities);
     return true;
-  }, []);
+  }, [identitiesRef]);
+
+  const addBookMedia = useCallback<AddBrandMedia>((projectId, incoming) => {
+    const before = identitiesRef.current;
+    const project = before.find(({ id }) => id === projectId);
+    if (!project) throw new Error('This project has been removed.');
+    const next = mergeBrandMedia(project, incoming);
+    if (next !== project && !commitIdentities(before.map(item => item.id === projectId ? next : item))) {
+      throw new Error('The browser could not save these files. Try smaller images or fewer icons.');
+    }
+    // Media imported from a book are immediately saved. Preserve independent pending brand edits.
+    setPendingIdentities(current => {
+      const draft = current[projectId];
+      if (!draft) return current;
+      const updated = mergeBrandMedia(draft, incoming);
+      return updated === draft ? current : { ...current, [projectId]: updated };
+    });
+  }, [commitIdentities, identitiesRef]);
 
   function selectIdentity(identityId: string) {
     warmProjectWorkspace(identityId);
@@ -2134,6 +2159,7 @@ export default function StudioApp() {
 
       <div className='studio-app-body'>
         <aside className='app-navbar studio-nav flex min-h-0 flex-col border-r border-border bg-background'>
+          <StudioToolNav activeToolId={activeToolId} onSelect={handleToolSelect} />
           <nav aria-label={gt('Studio help')} className='studio-sidebar-help'>
             <Button asChild className='h-9 flex-1 justify-start px-2.5' variant='ghost'>
               <Link aria-label={gt('Docs')} href='/docs'><BookOpen aria-hidden='true' /><span><T>Docs</T></span></Link>
@@ -2142,13 +2168,13 @@ export default function StudioApp() {
               <Link aria-label={gt('Quickstart')} href='/docs/getting-started'><Rocket aria-hidden='true' /><span><T>Quickstart</T></span></Link>
             </Button>
           </nav>
-          <StudioToolNav activeToolId={activeToolId} onSelect={handleToolSelect} />
         </aside>
 
         <section className='studio-workspace min-w-0 overflow-hidden bg-background'>
           <StudioWorkspaceView
             fallbackTool={activeTool}
             identities={retainedWorkspaceIdentities}
+            onAddAssets={addBookMedia}
             onIdentityChange={updateIdentity}
             onIdentitySave={saveIdentityImmediately}
             openIdentityIds={openIdentityIdSet}

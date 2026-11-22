@@ -30,13 +30,15 @@ import {
   hashSeed,
   imageFits,
   isDarkColor,
-  wcagRating,
   type BrandPalette,
   type BrandSurfaceTone,
 } from '@/lib/brandOutputKit';
 import { formatOklch, mixHexColors } from '@/lib/color';
 
-import { brandColorScales } from '@/lib/colorSystem';
+import { ColourRolesPlate, PairingsPlate, TonePlate, GlyphsPlate } from './BookColourPlates';
+import { ClearSpacePlate, CropPlate, IconProof, LogoRulesPlate, PlacementPlate } from './BookEditorialArtwork';
+import { BOOK_LOGO_RULES } from '@/lib/bookLogoRules';
+import { getBrandIconPacks } from '@/lib/brandMedia';
 import { brandTypeScale } from '@/lib/brandTokens';
 import { brandCustomers, brandProducts, brandProofStatements } from '@/lib/brandContent';
 import styles from './BrandBook.module.css';
@@ -374,26 +376,6 @@ function LogoFamilyPage({ context }: { context: BookPageContext }) {
   );
 }
 
-function ClearspacePage({ context }: { context: BookPageContext }) {
-  return (
-    <div className={styles.grid} data-layout='clearspace'>
-      <div className={styles.clearspace}>
-        <span className={styles.clearspaceZone}>
-          <Mark identity={context.identity} kind='wordmark' onDark={pageDark(context)} />
-          <i aria-hidden='true' data-edge='top'>x</i>
-          <i aria-hidden='true' data-edge='right'>x</i>
-          <i aria-hidden='true' data-edge='bottom'>x</i>
-          <i aria-hidden='true' data-edge='left'>x</i>
-        </span>
-      </div>
-      <div className={styles.caption}>
-        <Text context={context} options={{ className: styles.bodyText }} slot='lead' />
-        <Text context={context} options={{className:styles.label}} slot='unit' />
-      </div>
-    </div>
-  );
-}
-
 function MinimumPage({ context }: { context: BookPageContext }) {
   const dark = pageDark(context);
   const sizes = [
@@ -451,36 +433,7 @@ function ColorwaysPage({ context }: { context: BookPageContext }) {
   );
 }
 
-export const MISUSE = [
-  { label: 'Do not stretch or squash', style: { transform: 'scaleX(1.45)' } },
-  { label: 'Do not rotate', style: { transform: 'rotate(-14deg)' } },
-  { label: 'Do not recolour', style: { filter: 'invert(42%) sepia(92%) saturate(2400%) hue-rotate(300deg)' } },
-  { label: 'Do not add effects', style: { filter: 'drop-shadow(0.4cqi 0.5cqi 0.4cqi rgb(0 0 0 / 0.55)) blur(0.04cqi)' } },
-  { label: 'Do not outline', style: { filter: 'drop-shadow(1px 0 0 currentColor) drop-shadow(-1px 0 0 currentColor) drop-shadow(0 1px 0 currentColor) drop-shadow(0 -1px 0 currentColor) opacity(.35)' } },
-  { label: 'Do not place on busy fields', style: {} },
-] as const;
-
-function MisusePage({ context }: { context: BookPageContext }) {
-  const dark = pageDark(context);
-  return (
-    <div className={styles.grid} data-layout='misuse'>
-      <div className={styles.intro}>
-        <Text context={context} options={{ className: styles.bodyText }} slot='lead' />
-      </div>
-      <div className={styles.misuseGrid}>
-        {MISUSE.map((rule, index) => context.page.layout?.misuse?.[index]?.shown === false ? null : (
-          <figure key={rule.label}>
-            <span className={styles.misuseStage}>
-              {index === MISUSE.length - 1 ? <Device className={styles.fill} context={context} dark={!dark} seed={9} /> : null}
-              <span style={rule.style}><Mark identity={context.identity} kind='wordmark' onDark={index === MISUSE.length - 1 ? !dark : dark} /></span>
-            </span>
-            <figcaption><span aria-hidden='true' className={styles.cross}>✕</span>{context.page.layout?.misuse?.[index]?.label ?? rule.label}</figcaption>
-          </figure>
-        ))}
-      </div>
-    </div>
-  );
-}
+export const MISUSE = BOOK_LOGO_RULES;
 
 // ---------------------------------------------------------------------------
 // Colour
@@ -540,72 +493,6 @@ function ProportionPage({ context }: { context: BookPageContext }) {
             <strong>{share.share}%</strong>
             <figcaption><span>{share.name}</span><span className={styles.label}>{share.role}</span></figcaption>
           </figure>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PairingsPage({ context }: { context: BookPageContext }) {
-  const { palette } = context;
-  const colors = context.identity.colors.filter(c => !context.page.layout?.excludedColors?.includes(c.id));
-  const backgrounds = colors.map(c => [c.name, c.hex] as const);
-  const foregrounds = backgrounds;
-  return (
-    <div className={styles.grid} data-layout='pairings'>
-      <div className={styles.intro}>
-        <Text context={context} options={{ className: styles.bodyText }} slot='lead' />
-      </div>
-      <table className={styles.pairings}>
-        <thead><tr><th scope='col'><span className={styles.label}>Text / surface</span></th>{backgrounds.map(([name, color]) => <th key={name} scope='col'><span className={styles.label}>{name} · {color}</span></th>)}</tr></thead>
-        <tbody>
-          {foregrounds.map(([name, foreground]) => (
-            <tr key={name}>
-              <th scope='row'><span className={styles.label}>{name}</span></th>
-              {backgrounds.map(([backgroundName, background]) => {
-                const ratio = contrastRatio(foreground, background);
-                const rating = wcagRating(ratio);
-                const same = foreground.toUpperCase() === background.toUpperCase();
-                // The sample shows the real pairing; the ratio and rating stay readable on every surface.
-                return (
-                  <td data-pass={rating !== 'Fail'} key={backgroundName} style={{ background, color: bookTextColor(background, palette) }}>
-                    {same ? (
-                      <span className={styles.pairRating}>Same colour</span>
-                    ) : (
-                      <>
-                        <span className={styles.pairSample} style={{ color: foreground }}>Aa</span>
-                        <span className={styles.pairRatio}>{ratio.toFixed(1)} : 1</span>
-                        <span className={styles.pairRating}>{rating}</span>
-                      </>
-                    )}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function TintsPage({ context }: { context: BookPageContext }) {
-  const { palette } = context;
-  const scales = brandColorScales(context.identity);
-  const ramps = context.identity.colors;
-  return (
-    <div className={styles.grid} data-layout='tints'>
-      <div className={styles.intro}>
-        <Text context={context} options={{ className: styles.bodyText }} slot='lead' />
-      </div>
-      <div className={styles.tints}>
-        {ramps.map(({id,name}) => (
-          <div key={name}>
-            <span className={styles.label}>{name}</span>
-            <ol>
-              {(scales.get(id) ?? []).map(({step,hex}) => <li key={step} style={{background:hex,color:bookTextColor(hex,palette)}}><span>{step}</span><span>{hex}</span></li>)}
-            </ol>
-          </div>
         ))}
       </div>
     </div>
@@ -754,7 +641,16 @@ function ConstructionPage({ context }: { context: BookPageContext }) {
     <div className={styles.grid} data-layout='construction'>
       <div className={styles.construction}>
         <Device className={styles.fill} context={context} dark={!pageDark(context)} seed={2} />
-        <span aria-hidden='true' className={styles.constructionGrid} />
+        <span aria-hidden='true' className={styles.constructionGrid}>
+          {Array.from({ length: 6 }, (_, index) => (
+            <i key={'column-' + index} data-pptx-name={'Grid column ' + (index + 1)}
+              style={{ top: 0, bottom: 0, width: 1, left: (index * 100) / 6 + '%' }} />
+          ))}
+          {Array.from({ length: 4 }, (_, index) => (
+            <i key={'row-' + index} data-pptx-name={'Grid row ' + (index + 1)}
+              style={{ left: 0, right: 0, height: 1, top: (index * 100) / 4 + '%' }} />
+          ))}
+        </span>
         {notes.map((note, index) => <span className={styles.constructionNote} data-index={index} key={note}><b>{index + 1}</b>{note}</span>)}
       </div>
       <div className={styles.caption}>
@@ -787,6 +683,11 @@ function VariationsPage({ context }: { context: BookPageContext }) {
 const ICONS = [Asterisk, ArrowUpRight, Circle, Grid2X2, Layers3, Maximize2, MoveUpRight, Sparkles, Square, Target, Triangle, Rows3];
 
 function IconsPage({ context }: { context: BookPageContext }) {
+  const icons = getBrandIconPacks(context.identity.assets).flatMap(pack => pack.icons.map(asset => ({pack:pack.name,asset})));
+  if (icons.length) {
+    const start = context.page.rowStart ?? 0;
+    return <IconProof context={context} items={icons.slice(start, start + 12)} />;
+  }
   const stroke = context.identity.style.density === 'compact' ? 2 : 1.5;
   return (
     <div className={styles.grid} data-layout='icons'>
@@ -1201,10 +1102,14 @@ const PAGE_RENDERERS: Record<BookPage['kind'], (props: { context: BookPageContex
   applicationsSheet: SheetPage,
   applicationsSocial: SocialPage,
   closing: ClosingPage,
-  colourPairings: PairingsPage,
+  colourPairings: PairingsPlate,
+  colourPairingsFiltered: PairingsPlate,
+  colourPairingsGray: PairingsPlate,
+  colourRoles: ColourRolesPlate,
+  colourShades: TonePlate,
   colourPalette: PalettePage,
   colourProportion: ProportionPage,
-  colourTints: TintsPage,
+  colourTints: TonePlate,
   contents: ContentsPage,
   cover: CoverPage,
   deviceConstruction: ConstructionPage,
@@ -1216,12 +1121,14 @@ const PAGE_RENDERERS: Record<BookPage['kind'], (props: { context: BookPageContex
   imageryDirection: DirectionPage,
   imageryLibrary: LibraryPage,
   imageryTreatment: TreatmentPage,
-  logoClearspace: ClearspacePage,
+  imageryCrops: ({context}) => <CropPlate context={context} asset={pageAsset(context)} />,
+  logoClearspace: ClearSpacePlate,
   logoColorways: ColorwaysPage,
   logoFamily: LogoFamilyPage,
   logoMinimum: MinimumPage,
-  logoMisuse: MisusePage,
+  logoMisuse: LogoRulesPlate,
   logoPrimary: LogoPrimaryPage,
+  logoPlacement: PlacementPlate,
   motionPrinciples: MotionPrinciplesPage,
   motionSequence: MotionSequencePage,
   motionTokens: MotionTokensPage,
@@ -1232,6 +1139,7 @@ const PAGE_RENDERERS: Record<BookPage['kind'], (props: { context: BookPageContex
   strategyPillars: PillarsPage,
   strategyPremise: PremisePage,
   typeDisplay: TypeDisplayPage,
+  typeGlyphs: GlyphsPlate,
   typePairing: TypePairingPage,
   typeRoles: TypeRolesPage,
   typeScale: TypeScalePage,
@@ -1242,7 +1150,11 @@ const PAGE_RENDERERS: Record<BookPage['kind'], (props: { context: BookPageContex
   voiceSample: VoiceSamplePage,
 };
 
-const CHROMELESS: ReadonlySet<BookPage['kind']> = new Set(['cover', 'opener', 'closing', 'deviceHero']);
+const CHROMELESS: ReadonlySet<BookPage['kind']> = new Set([
+  'cover', 'opener', 'closing', 'deviceHero', 'colourPairings', 'colourPairingsFiltered',
+  'colourPairingsGray', 'colourTints', 'colourShades', 'colourRoles', 'logoClearspace', 'logoMisuse',
+  'typeGlyphs', 'logoPlacement', 'imageryCrops',
+]);
 
 export type BookPageViewProps = {
   context: BookPageContext;
@@ -1252,9 +1164,13 @@ export type BookPageViewProps = {
 
 
 /** Device-led pages sit on the device's own base colour so panel and field meet without a seam. */
+function pageColor(identity: BrandIdentity, value?: string) {
+  return identity.colors.find(color => color.id === value)?.hex ?? (value && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value) ? value : undefined);
+}
+
 function pageSurface(identity: BrandIdentity, page: BookPage, palette: BrandPalette) {
   const surface = brandSurface(palette, page.tone);
-  const color = (id?: string) => identity.colors.find(entry => entry.id === id)?.hex;
+  const color = (id?: string) => pageColor(identity, id);
   const background = color(page.layout?.background) ?? surface.background;
   const preferred = bookTextColor(background, palette);
   const foreground = color(page.layout?.foreground) ??
@@ -1278,7 +1194,7 @@ function samePage(previous: BookPageViewProps, next: BookPageViewProps): boolean
 /** One printed page: editorial chrome around the page's single idea. */
 export const BookPageView = memo(function BookPageView({ context, folio, sectionName }: BookPageViewProps) {
   const { identity, page, palette } = context;
-  const accent = identity.colors.find(color => color.id === page.layout?.accent)?.hex ?? palette.accent;
+  const accent = pageColor(identity, page.layout?.accent) ?? palette.accent;
   const renderContext = { ...context, palette: { ...palette, accent } };
   const surface = pageSurface(identity, page, renderContext.palette);
   const Renderer = PAGE_RENDERERS[page.kind];
@@ -1289,7 +1205,8 @@ export const BookPageView = memo(function BookPageView({ context, folio, section
     '--page-quiet': surface.secondary,
     '--page-rule': surface.rule,
   } as CSSProperties;
-  const chrome = !CHROMELESS.has(page.kind);
+  const customIcons = page.kind === 'deviceIcons' && getBrandIconPacks(identity.assets).length > 0;
+  const chrome = !CHROMELESS.has(page.kind) && !customIcons;
   return (
     <article
       aria-label={`${folio ? `${folio}. ` : ''}${page.title}`}

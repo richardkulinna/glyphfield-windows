@@ -1,0 +1,33 @@
+/* Workspaces use the project navigation as a quiet index to the tools. */
+.studio-nav .studio-sidebar-scroll {
+  padding-block: .35rem .85rem;
+}
+.studio-nav .studio-sidebar-scroll section + section {
+  border-block-start: 1px solid hsl(var(--border));
+}
+.studio-nav .studio-sidebar-scroll section h2 {
+  margin: .2rem 0 .3rem;
+  font-size: .75rem;
+  font-weight: 650;
+  letter-spacing: .01em;
+  text-transform: none;
+  color: hsl(var(--foreground));
+}
+.studio-nav .studio-sidebar-scroll button[aria-current="page"] {
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
+  box-shadow: inset 3px 0 hsl(var(--foreground));
+  font-weight: 650;
+}
+.studio-nav .studio-sidebar-help {
+  border-block-start: 1px solid hsl(var(--border));
+  border-block-end: 0;
+}
+.studio-app .studio-command-launcher kbd {
+  letter-spacing: 0;
+}
+@media (min-width: 1181px) {
+  .studio-nav .studio-sidebar-scroll { padding-inline: .75rem; }
+  .studio-nav .studio-sidebar-scroll section { padding-block: .7rem; }
+  .studio-app[data-studio-density="compact"] .studio-nav .studio-sidebar-scroll section { padding-block: .35rem; }
+}

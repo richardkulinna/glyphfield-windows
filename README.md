@@ -18,6 +18,12 @@ Für ein Update entpackst du die neue Version in einen eigenen Ordner und öffne
 
 Eine vorbereitete persönliche Migrationssicherung kann lokal als `private/Projekt.glyphfield.json` neben dem Starter abgelegt werden. Der Starter führt beim Öffnen zur Übernahme. Eine bereits bearbeitete Identität lässt sich behalten oder als separate Kopie ergänzen. Der öffentliche Download enthält keine solchen Sicherungen. Herkömmliche Marken-Kits importierst du im Studio.
 
+## Brandbook bearbeiten und exportieren
+
+Öffne **Brand book** und wähle eine Seite. Unter **Content** bearbeitest du deren Inhalt, unter **Elements** platzierst du Text, Bilder und Icons. **Style** enthält die Gestaltungsoptionen für die aktuelle Seite. Mit **Add page** ergänzt du Vorlagen, mit **Restore** holst du entfernte Seiten und Abschnitte samt ihren Änderungen zurück.
+
+**Export PowerPoint** lädt die sichtbaren Seiten in ihrer Reihenfolge als PPTX. Text, Farbflächen und Linien sind einzeln auswählbar. Fotos, Logos und Icons werden als eigenständige Bilder eingebettet. Installiere die verwendeten Markenschriften auf dem Präsentationsrechner, damit PowerPoint sie originalgetreu darstellen kann.
+
 ## Entwicklung
 
 - `studio/src/` enthält die Studio-Erweiterungen, `studio/upstream-files.json` die geprüften Upstream-Dateien.

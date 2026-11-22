@@ -25,9 +25,9 @@ type StringFormat =
 
 type FieldSpec =
   | { description?: string; enum?: readonly string[]; format?: StringFormat; kind: 'string'; maxLength: number; minLength?: number }
-  | { description?: string; integer?: boolean; kind: 'number'; maximum: number; minimum: number }
+  | { description?: string; integer?: boolean; kind: 'number'; maximum?: number; minimum?: number }
   | { description?: string; kind: 'boolean' }
-  | { description?: string; items: FieldSpec; kind: 'array'; maxItems: number; mergeKey?: 'id' | 'pair' | 'role' }
+  | { description?: string; items: FieldSpec; kind: 'array'; maxItems?: number; mergeKey?: 'id' | 'pair' | 'role' }
   | { description?: string; fields: Readonly<Record<string, FieldSpec>>; kind: 'object'; required?: readonly string[] };
 
 type ObjectSpec = Extract<FieldSpec, { kind: 'object' }>;
@@ -41,7 +41,7 @@ const oneOf = (values: readonly string[], description?: string): FieldSpec => ({
 const list = (maxItems: number, maxLength: number, description?: string): FieldSpec => ({
   description, items: text(maxLength, undefined, 1), kind: 'array', maxItems,
 });
-const number = (minimum: number, maximum: number, description?: string, integer = false): FieldSpec => ({
+const number = (minimum?: number, maximum?: number, description?: string, integer = false): FieldSpec => ({
   description, integer, kind: 'number', maximum, minimum,
 });
 const recordId = (description = 'Stable record ID. Keep it unchanged when editing.'): FieldSpec => ({
@@ -49,7 +49,7 @@ const recordId = (description = 'Stable record ID. Keep it unchanged when editin
 });
 const records = (
   item: ObjectSpec,
-  maxItems: number,
+  maxItems: number | undefined,
   description: string,
   mergeKey?: 'id' | 'pair' | 'role'
 ): FieldSpec => ({ description, items: item, kind: 'array', maxItems, mergeKey });
@@ -120,7 +120,7 @@ const IDENTITY_SPEC: ObjectSpec = {
       },
       kind: 'object',
     },
-    assets: records(ASSET_SPEC, 160, 'Logos, backgrounds, textures, imagery, product and reference files.', 'id'),
+    assets: records(ASSET_SPEC, undefined, 'Logos, backgrounds, textures, images, icon packs, product and reference files.', 'id'),
     audiences: list(24, 200, 'Who the brand addresses.'),
     builtIn: { description: 'Managed by Glyphfield; ignored on apply.', kind: 'boolean' },
     colorPairings: records({
@@ -141,9 +141,9 @@ const IDENTITY_SPEC: ObjectSpec = {
         scales: records({
           fields: {
             anchor: { description: 'Snap the nearest step to the exact palette HEX (default true).', kind: 'boolean' },
-            chroma: number(0, 200, 'Chroma as a percentage of the palette color (default 100).'),
+            chroma: number(0, undefined, 'Chroma as a percentage of the palette color (default 100).'),
             darkest: number(0, 0.5, 'OKLCH lightness of step 950 (default 0.22).'),
-            hueShift: number(-90, 90, 'Hue rotation in degrees from step 50 to step 950 (default 0).'),
+            hueShift: number(undefined, undefined, 'Hue rotation in degrees from step 50 to step 950 (default 0).'),
             id: { description: 'The colors[].id this scale belongs to.', format: 'color-id', kind: 'string', maxLength: 40, minLength: 1 },
             lightest: number(0.5, 1, 'OKLCH lightness of step 50 (default 0.975).'),
           },
@@ -319,11 +319,11 @@ const IDENTITY_SPEC: ObjectSpec = {
     },
     style: {
       fields: {
-        borderRadius: number(0, 64),
+        borderRadius: number(0),
         density: oneOf(['compact', 'comfortable', 'spacious']),
         grid: oneOf(['none', 'dots', 'lines']),
         imageTreatment: oneOf(['natural', 'monochrome', 'duotone']),
-        logoScale: number(40, 160),
+        logoScale: number(0),
       },
       kind: 'object',
     },
@@ -331,8 +331,8 @@ const IDENTITY_SPEC: ObjectSpec = {
     typeScale: {
       description: 'Modular type scale: size = basePx × ratio^step.',
       fields: {
-        basePx: number(10, 24),
-        ratio: number(1.067, 1.8),
+        basePx: number(1),
+        ratio: number(1.067),
         roleSteps: {
           description: `The scale step each role is set at; omitted roles use Display display, Body body, Accent lead, Code small. Steps: ${TYPE_STEP_NAMES.join(', ')}.`,
           fields: Object.fromEntries(TYPOGRAPHY_ROLES.map((role) => [role, oneOf(TYPE_STEP_NAMES)])),
@@ -346,8 +346,8 @@ const IDENTITY_SPEC: ObjectSpec = {
       fields: {
         family: text(80, undefined, 1),
         fontId: recordId('ID of a fonts[] record that renders this role.'),
-        letterSpacing: number(-12, 24, 'Tracking in px.'),
-        lineHeight: number(0.7, 2.4),
+        letterSpacing: number(undefined, undefined, 'Tracking in px.'),
+        lineHeight: number(0.01),
         opticalSize: number(6, 144, 'Fixed optical size on the opsz axis; omit for automatic optical sizing.'),
         role: oneOf(TYPOGRAPHY_ROLES),
         slant: number(-20, 20, 'Oblique angle in degrees, positive leans right; uses the slnt axis when the font has one.'),
@@ -517,8 +517,8 @@ function validateNumber(spec: Extract<FieldSpec, { kind: 'number' }>, value: unk
     issue(issues, 'type', path, `${path} must be a finite number; received ${describeValue(value)}.`);
     return;
   }
-  if (value < spec.minimum || value > spec.maximum || (spec.integer && !Number.isInteger(value))) {
-    issue(issues, 'range', path, `${path} must be ${spec.integer ? 'an integer' : 'a number'} from ${spec.minimum} to ${spec.maximum}; received ${value}.`);
+  if ((spec.minimum !== undefined && value < spec.minimum) || (spec.maximum !== undefined && value > spec.maximum) || (spec.integer && !Number.isInteger(value))) {
+    issue(issues, 'range', path, `${path} must be ${spec.integer ? 'an integer' : 'a number'} ${spec.minimum === undefined ? '' : 'at least ' + spec.minimum} ${spec.maximum === undefined ? '' : 'at most ' + spec.maximum}; received ${value}.`);
   }
 }
 
@@ -533,7 +533,7 @@ function validateArray(
     issue(issues, 'type', path, `${path} must be an array; received ${describeValue(value)}.`);
     return;
   }
-  if (value.length > spec.maxItems) {
+  if (spec.maxItems !== undefined && value.length > spec.maxItems) {
     issue(issues, 'too_many', path, `${path} may contain at most ${spec.maxItems} items; received ${value.length}.`);
   }
   value.forEach((item, index) => {

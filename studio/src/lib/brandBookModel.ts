@@ -5,6 +5,7 @@
  */
 import { orderItems, readLayout, readStructure, type BookLayout, type BookStructure } from './bookEditing';
 import type { BrandIdentity } from './brandIdentity';
+import { getBrandIconPacks } from './brandMedia';
 import { brandCoverAsset } from './brandCover';
 import { BRAND_SURFACE_TONES, brandVisualAssets, type BrandSurfaceTone } from './brandOutputKit';
 import { brandSampleEvent, brandSamplePerson } from './brandContent';
@@ -61,6 +62,13 @@ export const BOOK_PAGE_VARIANTS = {
   applicationsSocial: ['posts', 'stories'],
   closing: ['mark', 'statement'],
   colourPairings: ['matrix', 'cards'],
+  colourPairingsFiltered: ['matrix'],
+  colourPairingsGray: ['matrix'],
+  colourShades: ['ramps'],
+  colourRoles: ['grid'],
+  typeGlyphs: ['glyphs'],
+  logoPlacement: ['grid'],
+  imageryCrops: ['grid'],
   colourPalette: ['tiles', 'bands'],
   colourProportion: ['bar', 'field'],
   colourTints: ['ramps', 'steps'],
@@ -120,6 +128,8 @@ export type BookPageDefinition = {
   copy: Record<string, string>;
   group: string;
   id: string;
+  rowStart?: number;
+  columnStart?: number;
   /** True when the layout shows a swappable library image. */
   image: boolean;
   kind: BookPageKind;
@@ -177,20 +187,42 @@ function logoPages(identity: BrandIdentity): PageSeed[] {
   return [
     { copy: { lead: identity.dossier?.logo ?? 'The mark is a signature, not a decoration. Give it room and keep it exact.' }, id: 'logo-primary', kind: 'logoPrimary', title: 'Primary mark', tone: 'paper' },
     { copy: { lead: 'Use the artwork files as supplied. Choose the mark for small or square spaces and the wordmark where there is room to read.' }, id: 'logo-family', kind: 'logoFamily', title: 'Logo family', tone: 'paper' },
-    { copy: { lead: identity.dossier?.logo ?? '', unit: 'Clear space' }, id: 'logo-clearspace', kind: 'logoClearspace', title: 'Clear space', tone: 'muted' },
+    { copy: { title: 'Logo clear space', lead: identity.dossier?.logo ?? '', unit: 'Clear space' }, id: 'logo-clearspace', kind: 'logoClearspace', title: 'Clear space', tone: 'muted' },
     { copy: { lead: 'Choose minimum sizes for each output format.', markDigital: 'To specify', markPrint: 'To specify', wordmarkDigital: 'To specify', wordmarkPrint: 'To specify' }, id: 'logo-minimum', kind: 'logoMinimum', title: 'Minimum size', tone: 'paper' },
     { copy: { lead: 'The logo appears in its approved colours on approved surfaces only. Pick the version with the strongest contrast.' }, id: 'logo-colorways', kind: 'logoColorways', title: 'Colourways', tone: 'paper' },
-    { copy: { lead: first(identity.dossier?.prohibited.filter((rule) => /logo|mark|wordmark|symbol/i.test(rule)), 'Never alter the artwork. Every change below weakens recognition.') }, id: 'logo-misuse', kind: 'logoMisuse', title: 'Misuse', tone: 'paper' },
+    { copy: { title: 'Logo dos and don’ts', lead: first(identity.dossier?.prohibited.filter((rule) => /logo|mark|wordmark|symbol/i.test(rule)), 'Never alter the artwork. Every change below weakens recognition.') }, id: 'logo-misuse', kind: 'logoMisuse', title: 'Logo dos and don’ts', tone: 'paper' },
+    { copy: { title: 'Logoplatzierung', lead: '' }, id: 'logo-placement', kind: 'logoPlacement', title: 'Logoplatzierung', tone: 'paper' },
   ];
 }
 
 function colourPages(identity: BrandIdentity): PageSeed[] {
-  return [
+  const seeds: PageSeed[] = [
     { copy: { lead: identity.dossier?.color ?? 'A small palette, used with discipline, is easier to recognise than a large one.' }, id: 'colour-palette', kind: 'colourPalette', title: 'Palette', tone: 'paper' },
     { copy: { lead: 'Most of every surface is the dominant colour. The accent appears rarely, so it always means something.' }, id: 'colour-proportion', kind: 'colourProportion', title: 'Proportion', tone: 'paper' },
-    { copy: { lead: 'Every text pairing is measured against WCAG 2.2. Use AA pairs for body copy and reserve the rest for display sizes.' }, id: 'colour-pairings', kind: 'colourPairings', title: 'Pairings and contrast', tone: 'paper' },
-    { copy: { lead: 'Tints extend the core colours for interface states and charts. Never use a tint as a new brand colour.' }, id: 'colour-tints', kind: 'colourTints', title: 'Tonal ranges', tone: 'muted' },
+    { copy: { title: 'Kontrastmatrix', lead: 'Zeile = Hintergrund. Spalte = Schriftfarbe.' }, id: 'colour-pairings', kind: 'colourPairings', title: 'Kontrastmatrix', tone: 'paper' },
+    { copy: { title: 'Kontrastmatrix für Text', lead: 'Paare ab 3 : 1 sind sichtbar. Ein Rahmen kennzeichnet die Paare für Fließtext.' }, id: 'colour-pairings-filtered', kind: 'colourPairingsFiltered', title: 'Kontrastmatrix für Text', tone: 'paper' },
+    { copy: { title: 'Kontrastmatrix in Graustufen', lead: 'Die Graustufen zeigen die Helligkeitsunterschiede. Die Werte beziehen sich auf die Originalfarben.' }, id: 'colour-pairings-gray', kind: 'colourPairingsGray', title: 'Kontrastmatrix in Graustufen', tone: 'paper' },
+    { copy: { title: 'Tints / Aufhellungen', lead: 'Von links nach rechts steigt der Weißanteil. Jede Reihe beginnt mit dem exakten Originalton.' }, id: 'colour-tints', kind: 'colourTints', title: 'Tints / Aufhellungen', tone: 'paper' },
+    { copy: { title: 'Shades / Abdunklungen', lead: 'Von links nach rechts steigt der Schwarzanteil. Jede Reihe beginnt mit dem exakten Originalton.' }, id: 'colour-shades', kind: 'colourShades', title: 'Shades / Abdunklungen', tone: 'paper' },
+    { copy: { title: 'Farben im Einsatz', lead: '' }, id: 'colour-roles', kind: 'colourRoles', title: 'Farben im Einsatz', tone: 'paper' },
   ];
+  const blocks = Math.max(1, Math.ceil(identity.colors.length / 8));
+  return seeds.flatMap(page => {
+    const matrix = page.kind.startsWith('colourPairings');
+    if (blocks === 1 || (!matrix && !['colourTints', 'colourShades'].includes(page.kind))) return [page];
+    const pages: PageSeed[] = [];
+    for (let row = 0; row < blocks; row++) {
+      for (let column = 0; column < (matrix ? blocks : 1); column++) {
+        const rowStart = row * 8;
+        const columnStart = column * 8;
+        const part = pages.length + 1;
+        const title = page.title + ' (' + part + '/' + (matrix ? blocks * blocks : blocks) + ')';
+        pages.push({ ...page, rowStart, columnStart, title, copy: { ...page.copy, title },
+          id: part === 1 ? page.id : page.id + '-r' + row + '-c' + column });
+      }
+    }
+    return pages;
+  });
 }
 
 function typographyPages(identity: BrandIdentity): PageSeed[] {
@@ -200,24 +232,35 @@ function typographyPages(identity: BrandIdentity): PageSeed[] {
     { copy: { body: identity.positioning, headline: identity.strategy?.promise ?? identity.tagline }, id: 'type-pairing', kind: 'typePairing', title: 'Pairing', tone: 'muted' },
     { copy: { lead: `Modular scale: ${identity.typeScale?.basePx ?? 16} px base, ratio ${identity.typeScale?.ratio ?? 1.25}.` }, id: 'type-scale', kind: 'typeScale', title: 'Type scale', tone: 'paper' },
     { copy: { lead: identity.dossier?.typography ?? 'Each role has one job. Do not substitute faces between roles.' }, id: 'type-roles', kind: 'typeRoles', title: 'Roles', tone: 'paper' },
+    { copy: { title: 'Zeichensatz', lead: '' }, id: 'type-glyphs', kind: 'typeGlyphs', title: 'Zeichensatz', tone: 'paper' },
   ];
 }
 
 function devicePages(identity: BrandIdentity): PageSeed[] {
   const graphic = identity.graphicSystem;
-  return [
+  const seeds: PageSeed[] = [
     { copy: { body: graphic?.description ?? '', title: graphic?.device ?? 'Graphic device' }, id: 'device-hero', kind: 'deviceHero', title: 'The device', tone: 'deep' },
     { copy: { lead: graphic?.composition ?? '' }, id: 'device-construction', kind: 'deviceConstruction', title: 'Construction', tone: 'paper' },
     { copy: { lead: identity.dossier?.graphicDevice ?? 'The device flexes in scale and crop while its idea stays intact.' }, id: 'device-variations', kind: 'deviceVariations', title: 'Variations', tone: 'paper' },
     { copy: { lead: 'Icons share one stroke, one grid, and one corner radius with the rest of the system.' }, id: 'device-icons', kind: 'deviceIcons', title: 'Icon system', tone: 'muted' },
     { copy: { lead: 'Rules that keep the device ownable.' }, id: 'device-rules', kind: 'deviceRules', title: 'Device rules', tone: 'paper' },
   ];
+  const count = getBrandIconPacks(identity.assets).reduce((sum, pack) => sum + pack.icons.length, 0);
+  const pages = Math.ceil(count / 12);
+  return seeds.flatMap(seed => {
+    if (seed.kind !== 'deviceIcons' || pages < 2) return [seed];
+    return Array.from({ length: pages }, (_, index) => ({
+      ...seed, rowStart: index * 12, id: index ? seed.id + '-p' + (index + 1) : seed.id,
+      title: seed.title + ' (' + (index + 1) + '/' + pages + ')'
+    }));
+  });
 }
 
 function imageryPages(identity: BrandIdentity): PageSeed[] {
   return [
     { copy: { body: identity.dossier?.imagery ?? '', title: identity.graphicSystem?.imageDirection ?? '' }, id: 'imagery-direction', image: true, kind: 'imageryDirection', title: 'Image direction', tone: 'paper' },
     { copy: { lead: 'Approved library images. Use them as supplied; crop for composition, never for decoration.' }, id: 'imagery-library', image: true, kind: 'imageryLibrary', title: 'Library', tone: 'paper' },
+    { copy: { title: 'Bildausschnitte', lead: '' }, id: 'imagery-crops', kind: 'imageryCrops', title: 'Bildausschnitte', image: true, tone: 'paper' },
     { copy: { lead: identity.style?.imageTreatment === 'natural' ? 'Images keep their natural colour. Correct exposure and white balance; never tint.' : `Images use the ${identity.style?.imageTreatment} treatment so photography sits inside the palette.` }, id: 'imagery-treatment', image: true, kind: 'imageryTreatment', title: 'Treatment', tone: 'muted' },
   ];
 }
@@ -367,9 +410,12 @@ function definitionsForBook(identity: BrandIdentity, structure?: BookStructure):
   const templates = new Map(Object.values(groups).flat().map(page => [page.id, page]));
   for (const chapter of structure?.chapters ?? []) groups[chapter.id] = [];
   for (const page of structure?.additions ?? []) {
-    const template = templates.get(page.template);
+    // A saved duplicate of a continuation stays editable if its palette or icon pack later shrinks.
+    const baseId = page.template.replace(/-r\d+-c\d+$|-p\d+$/, '');
+    const template = templates.get(page.template) ?? templates.get(baseId);
     if (!template || !groups[page.group]) throw new RangeError('Unknown template or section in a custom page.');
-    groups[page.group]!.push({ ...template, group: page.group, id: page.id, title: page.title });
+    groups[page.group]!.push({ ...template, group: page.group, id: page.id, title: page.title,
+      copy: Object.hasOwn(template.copy, 'title') ? { ...template.copy, title: page.title } : template.copy });
   }
   return groups;
 }
@@ -413,8 +459,18 @@ export const BOOK_SOURCE_VERSION = 1;
 const MAX_COPY = 8192;
 
 export function bookSource(identity: BrandIdentity, overrides: BookOverrides | undefined) {
+  const removed = new Set(overrides?.structure?.removedPages);
+  const removedSections = new Set(overrides?.structure?.removedSections);
+  const archive: Record<string, BookPageOverride> = {};
+  if (overrides?.pages && (removed.size || removedSections.size)) {
+    for (const page of Object.values(definitionsForBook(identity, overrides.structure)).flat()) {
+      const saved = overrides.pages[page.id];
+      if (saved && (removed.has(page.id) || removedSections.has(page.group))) archive[page.id] = saved;
+    }
+  }
   return {
     schema: BOOK_SOURCE_SCHEMA,
+    ...(Object.keys(archive).length ? { archivedPages: archive } : {}),
     ...(overrides?.structure ? { structure: overrides.structure } : {}),
     sections: resolveBook(identity, overrides).map((section) => ({
       hidden: section.hidden,
@@ -537,8 +593,18 @@ export function parseBookSource(identity: BrandIdentity, value: unknown, previou
     images: bookImageAssetIds(identity),
     next: { pages: { ...previous?.pages }, sections: { ...previous?.sections } },
     pagesById: new Map(Object.values(defined).flat().map((page) => [page.id, page])),
-    resolvedById: new Map(resolveBook(identity, { structure }).flatMap((section) => section.pages).map((page) => [page.id, page])),
+    resolvedById: new Map(resolveBook(identity, { structure: { ...structure, removedPages: [], removedSections: [] } }).flatMap((section) => section.pages).map((page) => [page.id, page])),
   };
+  if (source.archivedPages !== undefined) {
+    for (const [id, raw] of Object.entries(record(source.archivedPages, 'archivedPages'))) {
+      const page = context.pagesById.get(id);
+      if (!page || !(structure?.removedPages?.includes(id) || structure?.removedSections?.includes(page.group))) {
+        throw new RangeError('Unknown or active page in brand book archive.');
+      }
+      const stored = parsePage(record(raw, 'archivedPages.' + id), page, context.resolvedById.get(id)!, context.images, 'archivedPages.' + id);
+      if (stored) context.next.pages[id] = stored;
+    }
+  }
   const order: string[] = [];
   source.sections.forEach((entry, sectionIndex) => {
     const path = `sections.${sectionIndex}`;

@@ -1,0 +1,509 @@
+import { describe, expect, it } from 'vitest';
+
+import { applyCanvasMutation, parseCanvasDocument } from '../canvasDocument';
+import { studioArtboardPresetForSize } from '../artboardSizes';
+import { shaderFrameCanvasAsset } from '../shaderFrameAssets';
+import {
+  createDesignLabCanvasDocument,
+  designLabSourceFromCanvasDocument,
+  parseDesignLabCanvasDocument,
+  reconcileDesignLabLayerGroups,
+  reconcileDesignLabLayerOrder,
+  serializeDesignLabCanvasDocument,
+  withDesignLabTimeline,
+  type DesignLabDocumentInput,
+} from '../designLabDocument';
+
+const CREATED_AT = '2026-09-01T12:00:00.000Z';
+
+function designLabInput(): DesignLabDocumentInput {
+  return {
+    assets: [{
+      id: 'asset-photo',
+      imageCrop: { enabled: true, focalPointX: 0.7, focalPointY: 0.35, zoom: 2 },
+      kind: 'sticker',
+      libraryAssetId: 'asset-library-photo',
+      name: 'Photo',
+      opacity: 0.8,
+      transform: { heightScale: 2, scale: 0.6, widthScale: 3, x: 12, y: -8 },
+      url: 'data:image/png;base64,aGVybw==',
+      visible: true,
+    }],
+    backgroundColor: '#111216',
+    brandId: 'gt',
+    createdAt: CREATED_AT,
+    effectLayers: [{
+      id: 'effect-bayer',
+      name: 'Bayer',
+      opacity: 0.35,
+      settings: { cellSize: 2, kind: 'bayer' },
+      visible: true,
+    }],
+    exportSettings: { durationMs: 1600, fps: 15, width: 960 },
+    groups: [{ id: 'group-lockup', layerIds: ['text-title', 'asset-photo'], name: 'Lockup' }],
+    height: 540,
+    id: 'gt-design-lab',
+    layerOrder: ['shader-background', 'effect-bayer', 'asset-photo', 'text-title'],
+    layerShaders: {},
+    logos: [],
+    ratio: 'wide',
+    revision: 7,
+    shaderLayers: [{
+      blendMode: 'normal',
+      frameState: { engine: 'paper', frame: 412.75, timelineTimeMs: 766.67, version: 1 },
+      id: 'shader-background',
+      materialId: 'paper-gem-smoke',
+      name: 'Canvas shader',
+      opacity: 1,
+      settings: { colorA: '#111216', colorB: '#E8500A' },
+      shaderSize: 0.65,
+      transform: { heightScale: 0.8, scale: 1, widthScale: 0.7, x: 42, y: -18 },
+      visible: true,
+    }],
+    shaderSequence: { cutCount: 10, pace: 'accelerating', targetLayerId: 'shader-background' },
+    textLayers: [{
+      align: 'center',
+      id: 'text-title',
+      lineHeight: 1,
+      name: 'Title',
+      opacity: 1,
+      tracking: -0.06,
+      transform: { heightScale: 0.5, scale: 0.4, widthScale: 0.7, x: 74, y: 304 },
+      value: 'Open Source',
+      runs: [{ start: 0, end: 4, style: { weight: 700, color: '#FF0000', underline: true } }],
+      visible: true,
+      weight: 500,
+      wrap: 'wrap',
+    }],
+    timeline: { frame: 23, paused: true },
+    title: 'GT Design Lab',
+    updatedAt: CREATED_AT,
+    width: 960,
+    workspace: {
+      activeArtboardId: 'artboard-main',
+      artboards: [{
+        id: 'artboard-main',
+        name: 'Launch frame',
+        snapshot: { backgroundColor: '#111216', ratio: 'wide' },
+        x: 120,
+        y: 180,
+      }],
+    },
+  };
+}
+
+describe('Design Lab canvas document adapter', () => {
+  it('retains extended crop zoom through the portable canvas document', () => {
+    const input = designLabInput();
+    const layer = { ...input.assets[0], imageCrop: { enabled: true, zoom: 12.5 } };
+    const document = createDesignLabCanvasDocument({ ...input, assets: [layer] });
+    expect(document.elements['asset-photo']?.imageTreatment?.crop.width).toBeCloseTo(1 / 12.5);
+    const restored = designLabSourceFromCanvasDocument(document).composition as Record<string, object[]>;
+    expect(restored.assets?.[0]).toMatchObject({ imageCrop: { zoom: 12.5 } });
+  });
+
+  it('keeps an optional project-local typography snapshot through source serialization', () => {
+    const identity = { id: 'gt', name: 'Shared brand', fonts: [{ id: 'custom', path: 'data:font/woff2;base64,d29mMg==' }], typography: [] };
+    const document = createDesignLabCanvasDocument({ ...designLabInput(), identity });
+    expect(parseCanvasDocument(JSON.stringify(document)).metadata.designLab).toMatchObject({ identity });
+    expect(createDesignLabCanvasDocument(designLabInput()).metadata.designLab).not.toHaveProperty('identity');
+  });
+  it.each([
+    { id: 'portrait-3-4', width: 1080, height: 1440 },
+    { id: 'portrait-2-3', width: 1080, height: 1620 },
+    { id: 'portrait-1-2', width: 1080, height: 2160 },
+  ])('round-trips the $id preset, artboard dimensions, and layer geometry', ({ id, width, height }) => {
+    const preset = studioArtboardPresetForSize(width, height);
+    expect(preset?.id).toBe(id);
+    const input = designLabInput();
+    Object.assign(input, { ratio: preset!.id, width, height });
+    input.workspace = {
+      activeArtboardId: 'artboard-main',
+      artboards: [{
+        id: 'artboard-main',
+        name: 'Portrait frame',
+        x: 120,
+        y: 180,
+        snapshot: {
+          dimensions: { width, height },
+          ratio: preset!.id,
+          textLayers: input.textLayers,
+        },
+      }],
+    };
+
+    const source = serializeDesignLabCanvasDocument(input);
+    const document = parseCanvasDocument(source);
+    expect(document.pages[document.pageIds[0]!]).toMatchObject({ width, height });
+    const restored = parseDesignLabCanvasDocument(source);
+    expect(restored.ratio).toBe(id);
+    expect(restored.canvasDimensions).toEqual({ width, height });
+    expect(restored.workspace).toEqual(input.workspace);
+    expect(restored.exportSettings).toEqual(input.exportSettings);
+    expect(restored.composition).toMatchObject({ textLayers: input.textLayers, layerOrder: input.layerOrder });
+  });
+
+  it('registers one durable frame asset for shared shader, content and inactive artboard snapshots', () => {
+    const frameSnapshot = { assetId: `shader-frame:${'a'.repeat(64)}`, height: 48, version: 1 as const, width: 96, futureField: 'preserved' };
+    const input = designLabInput();
+    input.shaderLayers = input.shaderLayers.map((layer) => ({ ...layer, frameSnapshot }));
+    input.layerShaders = { 'text-title': { materialId: 'paper-gem-smoke', frameSnapshot } };
+    input.workspace = { artboards: [{ id: 'inactive-artboard', snapshot: { shaderLayers: [{ id: 'shader-copy', frameSnapshot }] } }] };
+    const document = createDesignLabCanvasDocument(input);
+    expect(document.assets[frameSnapshot.assetId]).toEqual(shaderFrameCanvasAsset(frameSnapshot));
+    expect(Object.keys(document.assets).filter((id) => id.startsWith('shader-frame:'))).toEqual([frameSnapshot.assetId]);
+    const restored = designLabSourceFromCanvasDocument(document);
+    expect(restored.frameAssets).toEqual([shaderFrameCanvasAsset(frameSnapshot)]);
+    expect((restored.composition as Record<string, object[]>).shaderLayers?.[0]).toMatchObject({ frameSnapshot });
+    expect(restored.workspace).toEqual(input.workspace);
+  });
+
+  it('retains embedded frame assets through portable source roundtrips and rejects missing frames', () => {
+    const frameSnapshot = { assetId: `shader-frame:${'b'.repeat(64)}`, height: 1, version: 1 as const, width: 1 };
+    const input = designLabInput();
+    input.shaderLayers = input.shaderLayers.map((layer) => ({ ...layer, frameSnapshot }));
+    const asset = { ...shaderFrameCanvasAsset(frameSnapshot), byteLength: 4, source: 'data:image/png;base64,aGVybw==' };
+    input.frameAssets = [asset];
+    const source = serializeDesignLabCanvasDocument(input);
+    const restored = parseDesignLabCanvasDocument(source);
+    expect(restored.frameAssets).toEqual([asset]);
+    const broken = parseCanvasDocument(source);
+    delete broken.assets[frameSnapshot.assetId];
+    expect(() => designLabSourceFromCanvasDocument(broken)).toThrow(/missing its PNG asset/);
+  });
+
+  it('writes the standard canvas schema with embedded image bytes', () => {
+    const source = serializeDesignLabCanvasDocument(designLabInput());
+    const document = parseCanvasDocument(source);
+
+    expect(document.schemaVersion).toBe(2);
+    expect(document.pages[document.pageIds[0]!]!.elementIds).toEqual([
+      'shader-background',
+      'effect-bayer',
+      'asset-photo',
+      'text-title',
+    ]);
+    expect(document.assets['brand-asset:asset-library-photo']).toMatchObject({
+      byteLength: 4,
+      source: 'data:image/png;base64,aGVybw==',
+    });
+    expect(document.elements['shader-background']?.bounds).toEqual({
+      height: 0.8,
+      rotation: 0,
+      width: 0.7,
+      x: 42,
+      y: -18,
+    });
+    expect(document.elements['text-title']?.content).toBe('Open Source');
+    expect(document.elements['asset-photo']?.imageTreatment).toMatchObject({
+      crop: { height: 0.5, width: 0.5, x: 0.35, y: 0.175 },
+      focalPoint: { x: 0.7, y: 0.35 },
+      objectFit: 'cover',
+    });
+  });
+
+  it('reuses one embedded library asset across duplicated canvas placements', () => {
+    const input = designLabInput();
+    input.assets = [...input.assets, {
+      ...input.assets[0]!,
+      id: 'asset-photo-copy',
+      name: 'Photo copy',
+      transform: { heightScale: 2, scale: 0.6, widthScale: 3, x: 112, y: 42 },
+    }];
+    input.layerOrder = ['shader-background', 'asset-photo', 'asset-photo-copy', 'text-title'];
+
+    const document = createDesignLabCanvasDocument(input);
+
+    expect(Object.keys(document.assets)).toEqual(['brand-asset:asset-library-photo']);
+    expect(document.elements['asset-photo']?.assetId).toBe('brand-asset:asset-library-photo');
+    expect(document.elements['asset-photo-copy']?.assetId).toBe('brand-asset:asset-library-photo');
+    expect(parseDesignLabCanvasDocument(JSON.stringify(document)).composition).toMatchObject({
+      assets: [
+        { id: 'asset-photo', libraryAssetId: 'asset-library-photo' },
+        { id: 'asset-photo-copy', libraryAssetId: 'asset-library-photo' },
+      ],
+    });
+  });
+
+  it('round-trips current Design Lab source fields without losing transforms or order', () => {
+    const restored = parseDesignLabCanvasDocument(serializeDesignLabCanvasDocument(designLabInput()));
+    const composition = restored.composition as Record<string, object[]>;
+
+    expect(restored.version).toBe(4);
+    expect(restored.canvasDimensions).toEqual({ height: 540, width: 960 });
+    expect(composition.assets?.[0]).toMatchObject({
+      id: 'asset-photo',
+      imageCrop: { enabled: true, focalPointX: 0.7, focalPointY: 0.35, zoom: 2 },
+      kind: 'sticker',
+      libraryAssetId: 'asset-library-photo',
+      transform: { heightScale: 2, scale: 0.6, widthScale: 3, x: 12, y: -8 },
+      url: 'data:image/png;base64,aGVybw==',
+    });
+    expect(composition.textLayers?.[0]).toMatchObject({
+      id: 'text-title',
+      transform: { heightScale: 0.5, scale: 0.4, widthScale: 0.7, x: 74, y: 304 },
+      value: 'Open Source',
+    });
+    expect(composition.shaderLayers?.[0]).toMatchObject({
+      frameState: { engine: 'paper', frame: 412.75, timelineTimeMs: 766.67, version: 1 },
+      id: 'shader-background',
+      transform: { heightScale: 0.8, scale: 1, widthScale: 0.7, x: 42, y: -18 },
+    });
+    expect((restored.composition as Record<string, string[]>).layerOrder).toEqual(designLabInput().layerOrder);
+    expect(restored.workspace).toEqual(designLabInput().workspace);
+  });
+
+  it('stores layer rotation as element bounds.rotation and loads older layers at 0', () => {
+    const input = designLabInput();
+    input.assets = [{ ...input.assets[0]!, transform: { heightScale: 2, rotation: 30, scale: 0.6, widthScale: 3, x: 12, y: -8 } }];
+    const document = parseCanvasDocument(serializeDesignLabCanvasDocument(input));
+    expect(document.elements['asset-photo']?.bounds.rotation).toBe(30);
+    // The text layer was saved without a rotation.
+    expect(document.elements['text-title']?.bounds.rotation).toBe(0);
+    const restored = designLabSourceFromCanvasDocument(document).composition as Record<string, Array<{ transform: Record<string, number> }>>;
+    expect(restored.assets?.[0]?.transform).toEqual({ heightScale: 2, rotation: 30, scale: 0.6, widthScale: 3, x: 12, y: -8 });
+    expect(restored.textLayers?.[0]?.transform).not.toHaveProperty('rotation');
+
+    // Editing bounds.rotation in the portable source turns the layer; 0 removes the field.
+    const edited = applyCanvasMutation(document, { bounds: { rotation: 200 }, elementId: 'text-title', type: 'resize-element' });
+    expect((designLabSourceFromCanvasDocument(edited).composition as Record<string, Array<{ transform: Record<string, number> }>>).textLayers?.[0]?.transform.rotation).toBe(-160);
+    const cleared = applyCanvasMutation(document, { bounds: { rotation: 0 }, elementId: 'asset-photo', type: 'resize-element' });
+    expect((designLabSourceFromCanvasDocument(cleared).composition as Record<string, Array<{ transform: Record<string, number> }>>).assets?.[0]?.transform).not.toHaveProperty('rotation');
+  });
+
+  it('round-trips an image effect on an Effect layer as additive settings', () => {
+    const input = designLabInput();
+    input.effectLayers = [{
+      id: 'effect-bayer',
+      name: 'Halftone',
+      opacity: 0.8,
+      settings: { cellSize: 2, effectId: 'shader-effects-halftone', effectProps: { frequency: 40 }, kind: 'bayer' },
+      visible: true,
+    }];
+    const restored = parseDesignLabCanvasDocument(serializeDesignLabCanvasDocument(input));
+    expect((restored.composition as { effectLayers: object[] }).effectLayers[0]).toMatchObject({
+      id: 'effect-bayer',
+      opacity: 0.8,
+      settings: { effectId: 'shader-effects-halftone', effectProps: { frequency: 40 }, kind: 'bayer' },
+    });
+  });
+
+  it('maps a layer lock to the portable element lock and back', () => {
+    const input = designLabInput();
+    input.textLayers = input.textLayers.map((layer) => ({ ...layer, locked: true }));
+    const document = createDesignLabCanvasDocument(input);
+    expect(document.elements['text-title']).toMatchObject({ locked: true });
+    expect(document.elements['shader-background']).toMatchObject({ locked: false });
+    const restored = designLabSourceFromCanvasDocument(document);
+    const composition = restored.composition as { shaderLayers: object[]; textLayers: object[] };
+    expect(composition.textLayers[0]).toMatchObject({ locked: true });
+    expect(composition.shaderLayers[0]).not.toHaveProperty('locked');
+
+    // Agents lock layers through the canonical element field.
+    const unlocked = applyCanvasMutation(document, { elementId: 'text-title', locked: false, type: 'set-lock' });
+    const relocked = applyCanvasMutation(unlocked, { elementId: 'shader-background', locked: true, type: 'set-lock' });
+    const edited = designLabSourceFromCanvasDocument(relocked).composition as { shaderLayers: object[]; textLayers: object[] };
+    expect(edited.textLayers[0]).not.toHaveProperty('locked');
+    expect(edited.shaderLayers[0]).toMatchObject({ locked: true });
+  });
+
+  it('upgrades legacy full-canvas shaders with an explicit adjustable frame', () => {
+    const input = designLabInput();
+    const legacyShader = { ...input.shaderLayers[0] } as Record<string, unknown>;
+    delete legacyShader.transform;
+    input.shaderLayers = [legacyShader];
+
+    const restored = parseDesignLabCanvasDocument(serializeDesignLabCanvasDocument(input));
+    const shaders = (restored.composition as Record<string, Array<{ transform: object }>>).shaderLayers;
+
+    expect(shaders?.[0]?.transform).toEqual({ scale: 1, x: 0, y: 0 });
+  });
+
+  it('preserves uniform logo scale without inventing independent dimensions after reload', () => {
+    const input = designLabInput();
+    input.logos = [{
+      id: 'logo-uniform',
+      name: 'Uniform mark',
+      transform: { scale: 0.457_760_103, x: -168.5, y: 305.2 },
+      url: 'data:image/svg+xml;base64,PHN2Zy8+',
+      visible: true,
+    }];
+    input.layerOrder = [...input.layerOrder, 'logo-uniform'];
+
+    const document = createDesignLabCanvasDocument(input);
+    expect(document.elements['logo-uniform']?.bounds).toMatchObject({
+      height: 0.457_760_103,
+      width: 0.457_760_103,
+    });
+
+    const restored = parseDesignLabCanvasDocument(serializeDesignLabCanvasDocument(input));
+    const logos = (restored.composition as Record<string, Array<{ transform: object }>>).logos;
+    expect(logos?.[0]?.transform).toEqual({
+      scale: 0.457_760_103,
+      x: -168.5,
+      y: 305.2,
+    });
+  });
+
+  it('uses canonical element geometry when a canvas mutation changes the design', () => {
+    const document = createDesignLabCanvasDocument(designLabInput());
+    const moved = applyCanvasMutation(document, {
+      deltaX: 18,
+      deltaY: -4,
+      elementIds: ['asset-photo', 'text-title'],
+      type: 'move-elements',
+    });
+    const restored = designLabSourceFromCanvasDocument(moved);
+    const composition = restored.composition as Record<string, Array<{ transform: { x: number; y: number } }>>;
+
+    expect(composition.assets?.[0]?.transform).toMatchObject({ x: 30, y: -12 });
+    expect(composition.textLayers?.[0]?.transform).toMatchObject({ x: 92, y: 300 });
+  });
+
+  it('updates only timeline metadata and revision for a live source snapshot', () => {
+    const document = createDesignLabCanvasDocument(designLabInput());
+    const snapshot = withDesignLabTimeline(document, { frame: 11, paused: false }, 48);
+
+    expect(snapshot).not.toBe(document);
+    expect(snapshot.elements).toBe(document.elements);
+    expect(snapshot.pages).toBe(document.pages);
+    expect(snapshot.assets).toBe(document.assets);
+    expect(snapshot.revision).toBe(48);
+    expect(designLabSourceFromCanvasDocument(snapshot)).toMatchObject({
+      timeline: { frame: 11, paused: false },
+    });
+  });
+
+  it('reconciles stale and missing layers into one deterministic render order', () => {
+    expect(reconcileDesignLabLayerOrder({
+      assets: ['asset-photo'],
+      effects: ['effect-bayer'],
+      logos: ['logo-mark'],
+      shaders: ['shader-a', 'shader-b'],
+      stored: ['stale', 'shader-a', 'text-title', 'shader-a', 'asset-photo'],
+      text: ['text-title', 'text-caption'],
+    })).toEqual([
+      'shader-a',
+      'shader-b',
+      'text-title',
+      'asset-photo',
+      'text-caption',
+      'logo-mark',
+      'effect-bayer',
+    ]);
+  });
+
+  it('reconciles overlapping groups against the live layer set', () => {
+    expect(reconcileDesignLabLayerGroups([
+      { id: 'primary', layerIds: ['text-title', 'asset-photo', 'stale'], name: 'Primary' },
+      { id: 'overlap', layerIds: ['asset-photo', 'logo-mark', 'effect-bayer'], name: 'Overlap' },
+      { id: 'too-small', layerIds: ['shader-background'], name: 'Too small' },
+    ], ['shader-background', 'effect-bayer', 'asset-photo', 'text-title', 'logo-mark'])).toEqual([
+      { id: 'primary', layerIds: ['text-title', 'asset-photo'], name: 'Primary' },
+      { id: 'overlap', layerIds: ['logo-mark', 'effect-bayer'], name: 'Overlap' },
+    ]);
+  });
+
+  it('infers external resource MIME types for every supported image format and fallback', () => {
+    const sources = [
+      ['/art.svg?revision=2', 'image/svg+xml'],
+      ['/art.png', 'image/png'],
+      ['/art.webp', 'image/webp'],
+      ['/art.gif', 'image/gif'],
+      ['/art.avif', 'image/avif'],
+      ['/art.jpg#frame', 'image/jpeg'],
+      ['/art.bin', 'application/octet-stream'],
+    ] as const;
+    const input = designLabInput();
+    input.assets = sources.map(([url], index) => ({
+      id: `asset-${index}`,
+      name: `Asset ${index}`,
+      transform: { heightScale: 100, widthScale: 100, x: 0, y: 0 },
+      url,
+    }));
+    input.logos = [{
+      id: 'logo-fallback',
+      name: 'Logo fallback',
+      transform: { heightScale: 100, widthScale: 100, x: 0, y: 0 },
+      url: '/brand-mark.unknown',
+    }];
+    input.layerOrder = [
+      ...sources.map((_, index) => `asset-${index}`),
+      'logo-fallback',
+    ];
+    const document = createDesignLabCanvasDocument(input);
+
+    expect(sources.map((_, index) => document.assets[`resource:asset-${index}`]?.mimeType))
+      .toEqual(sources.map(([, mimeType]) => mimeType));
+    expect(document.assets['resource:logo-fallback']?.mimeType).toBe('image/svg+xml');
+  });
+
+  it('rejects malformed layer payloads, missing ids, and missing Design Lab metadata', () => {
+    const invalidPayload = designLabInput();
+    invalidPayload.assets = [[]];
+    expect(() => createDesignLabCanvasDocument(invalidPayload)).toThrow(/asset layer must serialize to an object/i);
+
+    const missingId = designLabInput();
+    missingId.assets = [{ name: 'Missing id', url: '/image.png' }];
+    missingId.layerOrder = [''];
+    expect(() => createDesignLabCanvasDocument(missingId)).toThrow(/asset layer is missing its id/i);
+
+    const missingMetadata = { ...createDesignLabCanvasDocument(designLabInput()), metadata: {} };
+    expect(() => withDesignLabTimeline(missingMetadata, { frame: 1 }, 2)).toThrow(/metadata is missing/i);
+    expect(() => designLabSourceFromCanvasDocument(missingMetadata)).toThrow(/not a Design Lab composition/i);
+
+    const unsupportedBlend = designLabInput();
+    unsupportedBlend.shaderLayers = [{
+      ...(unsupportedBlend.shaderLayers[0] as Record<string, object | string | number | boolean>),
+      blendMode: 'color-dodge',
+    }];
+    expect(createDesignLabCanvasDocument(unsupportedBlend).elements['shader-background']?.style.blendMode)
+      .toBe('normal');
+  });
+
+  it('round-trips explicit pixel size and italic text across artboards without flattening scale or upgrading legacy text', () => {
+    const input = designLabInput();
+    const legacy = { ...input.textLayers[0]!, id: 'text-legacy', name: 'Legacy title' };
+    const explicit = {
+      ...input.textLayers[0]!,
+      fontSize: 12,
+      fontStyle: 'italic',
+      strikethrough: true,
+      underline: true,
+    };
+    const scaled = {
+      ...explicit,
+      id: 'text-scaled',
+      fontSize: 24,
+      fontStyle: 'normal',
+      transform: { x: 123, y: -34, scale: 0.5, widthScale: 0.61, heightScale: 0.43 },
+    };
+    input.textLayers = [explicit, legacy];
+    input.layerOrder = [...input.layerOrder, 'text-legacy'];
+    input.workspace = {
+      activeArtboardId: 'artboard-main',
+      artboards: [
+        { id: 'artboard-main', name: 'Wide type', x: 120, y: 180,
+          snapshot: { dimensions: { width: 960, height: 540 }, ratio: 'wide', textLayers: input.textLayers } },
+        { id: 'artboard-portrait', name: 'Portrait type', x: 1200, y: 180,
+          snapshot: { dimensions: { width: 1080, height: 1440 }, ratio: 'portrait-3-4', textLayers: [scaled] } },
+      ],
+    };
+
+    const source = serializeDesignLabCanvasDocument(input);
+    const document = parseCanvasDocument(source);
+    expect(document.elements['text-title']?.data).toMatchObject(explicit);
+    expect(document.elements['text-legacy']?.data).not.toHaveProperty('fontSize');
+    expect(document.elements['text-legacy']?.data).not.toHaveProperty('fontStyle');
+    expect(document.elements['text-legacy']?.data).not.toHaveProperty('underline');
+    expect(document.elements['text-legacy']?.data).not.toHaveProperty('strikethrough');
+    const restored = parseDesignLabCanvasDocument(source);
+    const composition = restored.composition as { textLayers: object[] };
+    expect(composition.textLayers[0]).toMatchObject(explicit);
+    expect(composition.textLayers[1]).not.toHaveProperty('fontSize');
+    expect(composition.textLayers[1]).not.toHaveProperty('fontStyle');
+    expect(composition.textLayers[1]).not.toHaveProperty('underline');
+    expect(composition.textLayers[1]).not.toHaveProperty('strikethrough');
+    expect(restored.workspace).toEqual(input.workspace);
+  });
+});

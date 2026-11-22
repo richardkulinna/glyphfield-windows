@@ -1509,11 +1509,12 @@
 .constructionGrid {
   position: absolute;
   inset: 0;
-  background-image:
-    linear-gradient(to right, color-mix(in srgb, var(--page-fg) 22%, transparent) 1px, transparent 1px),
-    linear-gradient(to bottom, color-mix(in srgb, var(--page-fg) 22%, transparent) 1px, transparent 1px);
-  background-size: calc(100% / 6) calc(100% / 4);
-  mix-blend-mode: difference;
+  pointer-events: none;
+}
+
+.constructionGrid i {
+  position: absolute;
+  background: color-mix(in srgb, var(--page-fg) 22%, transparent);
 }
 
 .constructionNote {
@@ -2383,3 +2384,56 @@
 .proportion[data-variant='field'] { display:flex; flex-direction:column; }
 .proportion[data-variant='field'] figure:nth-child(n) { position:static; inset:auto; width:auto; height:auto; padding:.35cqi .6cqi; flex:var(--share) 1 0; }
 .navIntroduction { grid-template-columns:minmax(0,1fr) auto; }
+
+/* Book navigation and the three page-editing tasks. */
+.pdfButton, .readerTools button {
+  display: inline-flex; align-items: center; gap: .4rem; min-height: 34px;
+  border: 1px solid hsl(var(--border)); border-radius: 6px; padding: 0 .65rem;
+  background: hsl(var(--background)); color: hsl(var(--foreground)); font: inherit; font-size: .75rem;
+}
+.pdfButton svg { width: 14px; height: 14px; }
+.readerTools { display: flex; gap: .65rem; align-items: center; }
+.pageJump { padding: .6rem .8rem; border-bottom: 1px solid hsl(var(--border)); }
+.restoreList { list-style: none; margin: .5rem 0 0; padding: 0; max-height: 18rem; overflow: auto; }
+.restoreList button { display: flex; justify-content: space-between; gap: .5rem; width: 100%; padding: .4rem; text-align: left; }
+.restoreList small, .inspectorHeading small { color: hsl(var(--muted-foreground)); }
+.inspectorHeading { display: grid; gap: .2rem; padding: .9rem 1rem .65rem; }
+.inspectorHeading strong { line-height: 1.2; font-size: 1.15rem; }
+.inspectorTabs { display: grid; grid-template-columns: repeat(3,1fr); border-block-end: 1px solid hsl(var(--border)); padding-inline: .65rem; }
+.inspectorTabs button { font-size: .8rem; padding: .6rem .25rem; border-bottom: 2px solid transparent; }
+.inspectorTabs button[aria-pressed=true] { font-weight: 650; border-color: currentColor; }
+.bookColorField { display: flex; align-items: start; gap: .3rem; min-width: 0; }
+.bookColorField > :first-child { flex: 1; min-width: 0; }
+.bookColorField > button { font-size: .68rem; padding: .25rem; }
+.diagramField { display: grid; grid-template-columns: minmax(0,1fr) auto; padding-bottom: .45rem; font-size: .78rem; gap: .4rem; }
+.diagramField > :last-child { grid-column: 1 / -1; width: 100%; }
+.diagramField output { font-variant-numeric: tabular-nums; }
+.overviewChapter { margin: 0 0 .1rem; font-size: 1.05rem; line-height: 1.3; font-weight: 650; }
+.root > [role=alert] { position: absolute; inset: 3rem .75rem auto auto; z-index: 40; max-width: 32rem; padding: .6rem 1rem; color: hsl(var(--foreground)); background: hsl(var(--background)); border: 1px solid hsl(var(--border)); border-radius: .4rem; }
+@media screen {
+  .canvas { background-image: none; }
+  .overviewBoard { width: 100%; min-width: 0; gap: 2.3rem; align-items: stretch; }
+  .overviewRow { display: grid; grid-template-columns: repeat(auto-fill,minmax(min(100%,var(--book-thumb-width)),1fr)); gap: .8rem 1rem; }
+  .overviewChapter { grid-column: 1 / -1; border-bottom: 1px solid hsl(var(--border)); padding-bottom: .5rem; }
+  .pageButton { width: 100%; min-width: 0; }
+  .root[data-exporting] .pageButton { content-visibility: visible; contain: none; }
+  .thumbnailCaption { font-size: .73rem; }
+  .reader { padding: clamp(.25rem,1.2vw,1.1rem); gap: .5rem; grid-template-columns: 30px minmax(0,1fr) 30px; }
+  .readerArrow { width: 30px; height: 30px; }
+}
+@container brand-book (max-width: 860px) {
+  .body[data-inspector] { grid-template-columns: minmax(0,1fr) minmax(220px,36%); }
+  .body[data-inspector] .navigator { display: none; }
+  .body[data-inspector] .inspector { display: block; width: 100%; max-width: none; overflow-y: auto; }
+}
+@container brand-book (max-width: 620px) {
+  .body[data-inspector] { grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(140px,44%) minmax(0,1fr); }
+  .body[data-inspector] .inspector { border-left: none; border-top: 1px solid hsl(var(--border)); min-height: 0; }
+  .readerTools { gap: .3rem; }
+  .readerTools button { font-size: .68rem; }
+  .pdfButton, .exportButton { padding-inline: .35rem; }
+  .exportButton span { display: inline; }
+}
+@media print {
+  .overviewChapter, .root > [role=alert] { display: none !important; }
+}

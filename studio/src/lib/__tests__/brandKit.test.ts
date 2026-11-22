@@ -18,6 +18,7 @@ import {
   brandLogoFileName,
 } from '../brandKit';
 import { BrandSourceValidationError } from '../brandSource';
+import { renderBrandKitRequest } from '../brandApi';
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>';
 const WOFF2 = new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0, 1, 0, 0, 1, 2, 3, 4]);
@@ -186,6 +187,34 @@ describe('brand kit', () => {
     expect(source.assets.find((entry: { id: string }) => entry.id === asset.id)).toMatchObject({ path: '', redistribution: 'research-only' });
     const css = new TextDecoder().decode(files.find((file) => file.name === 'tokens/brand.css')!.bytes);
     for (const name of names.filter((item) => /fonts\/acmesans-variable/i.test(item))) expect(css).toContain('../' + name);
+  });
+
+  it('round-trips every authored JSON field across direct, kit and HTTP Markdown, including icon packs and literal code', async () => {
+    const identity = await acme();
+    identity.colors[0]!.hex = '#abcdef';
+    identity.samples = { code: { label: 'Example', snippet: "fetch('data:text/plain,hello')\n```\nnext" } };
+    const icon = { ...identity.assets[0]!, id: 'check', type: 'icon' as const, label: 'Check', tags: ['icon-pack:Product UI'] };
+    identity.assets.push(icon);
+    const source = { ...identity, customRules: { ordered: ['second', 'first', ''], empty: [], zero: 0, approved: false, removed: null } };
+    const project = { schemaVersion: 1, identityId: source.id, designs: [], drafts: { slide: { title: 'Editor page', code: source.samples!.code!.snippet, image: icon.path } } };
+    const direct = await createBrandKitArtifact(source, 'markdown', undefined, project);
+    const files = await brandKitFiles(source, async () => new Uint8Array([1]), project);
+    const kit = new TextDecoder().decode(files.find((entry) => entry.name === 'brand.md')!.bytes);
+    const http = renderBrandKitRequest({ identity: source, project, format: 'markdown' }).content;
+    const expected = JSON.parse(JSON.stringify(source));
+    expected.assets[0].path = 'logos/mark-dark.svg';
+    if (expected.assets[1].path.startsWith('data:')) expected.assets[1].path = 'logos/mark-light.svg';
+    expected.assets.at(-1).path = 'artwork/check.svg';
+    expected.fonts.at(-1).path = 'fonts/AcmeSans-Variable.woff2';
+    for (const markdown of [direct.previewText!, kit, http]) {
+      expect(markdown).toContain('## Icon pack: Product UI');
+      const appendix = markdown.split('\n## Identity source\n')[1]!;
+      const block = appendix.match(/^(`{3,})json\n([\s\S]*?)\n\1$/m)!;
+      expect(JSON.parse(block[2]!)).toEqual(expected);
+      const draft = markdown.split('\n## Project drafts and saved documents\n')[1]!.match(/^(`{3,})json\n([\s\S]*?)\n\1$/m)!;
+      expect(JSON.parse(draft[2]!)).toEqual({ ...project, drafts: { slide: { ...project.drafts.slide, image: 'artwork/check.svg' } } });
+    }
+    expect(kit).toBe(direct.previewText);
   });
 
   it('creates zip and single-file artifacts with matching names and MIME types', async () => {

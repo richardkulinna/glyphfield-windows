@@ -18,7 +18,7 @@ export const TYPOGRAPHY_PREVIEW_MAX_SIZES = {
 
 export function clampTypographyPreviewSize(role: TypographyPreviewRole, fontSize: number): number {
   const boundedSize = Number.isFinite(fontSize) ? fontSize : TYPOGRAPHY_PREVIEW_DEFAULT_SIZES[role];
-  return Math.max(10, Math.min(TYPOGRAPHY_PREVIEW_MAX_SIZES[role], boundedSize));
+  return Math.max(10, boundedSize);
 }
 
 export function capVisibleFontWeight(fontWeight: number): number {

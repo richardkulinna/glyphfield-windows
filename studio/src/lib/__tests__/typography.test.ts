@@ -18,8 +18,8 @@ describe('typography helpers', () => {
   it('keeps every typography specimen below the landing hero type floor', () => {
     expect(Math.max(...Object.values(TYPOGRAPHY_PREVIEW_MAX_SIZES))).toBe(44);
     expect(TYPOGRAPHY_PREVIEW_DEFAULT_SIZES.Display).toBe(40);
-    expect(clampTypographyPreviewSize('Display', 180)).toBe(44);
-    expect(clampTypographyPreviewSize('Accent', 96)).toBe(36);
+    expect(clampTypographyPreviewSize('Display', 180)).toBe(180);
+    expect(clampTypographyPreviewSize('Accent', 96)).toBe(96);
   });
 
   it('measures editable specimen text with monkeytype-style WPM', () => {

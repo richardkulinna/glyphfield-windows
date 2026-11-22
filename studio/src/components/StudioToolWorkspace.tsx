@@ -1,0 +1,117 @@
+'use client';
+
+import dynamic from 'next/dynamic';
+import { Fragment, memo, type ReactNode } from 'react';
+import { T } from 'gt-next';
+import { FileImage } from '@/components/ui/SolidIcons';
+import { ToolShell } from '@/components/tools/ToolShell';
+import { ControlSection, UploadField } from '@/components/tools/ToolFields';
+import type { BrandIdentity } from '@/lib/brandIdentity';
+import type { AddBrandMedia } from '@/lib/brandMedia';
+import type { StudioTool, StudioToolId } from '@/lib/studioCatalog';
+
+export { ToolShell };
+
+// Tool editors suspend to the Studio workspace boundary (see StudioApp), which
+// keeps the previous tool visible until the next one has loaded.
+const BrandBook = dynamic(() => import('@/components/BrandBook'));
+const BrandElementsStudio = dynamic(() => import('@/components/BrandElementsStudio'));
+const BrandSettingsStudio = dynamic(() => import('@/components/BrandSettingsStudio'));
+const ColorTool = dynamic(() => import('@/components/tools/ColorTool'));
+const ComponentLibraryTool = dynamic(() => import('@/components/tools/ComponentLibraryTool'));
+const DesignBoard = dynamic(() => import('@/components/DesignBoard'));
+const LogoShaderStudio = dynamic(() => import('@/components/LogoShaderStudio'), {
+  loading: ToolModuleLoading,
+  ssr: false,
+});
+const OpenGraphTool = dynamic(() => import('@/components/tools/OpenGraphTool'));
+const TemplateTool = dynamic(() => import('@/components/tools/TemplateTool'));
+const TerminalTool = dynamic(() => import('@/components/tools/TerminalTool'));
+const TypographyTool = dynamic(() => import('@/components/tools/TypographyTool'));
+
+// Hover/focus and idle prefetch for the per-tool chunks above (see StudioApp).
+const TOOL_MODULE_LOADERS: Partial<Record<StudioToolId, () => Promise<unknown>>> = {
+  blog: () => import('@/components/tools/TemplateTool'),
+  'brand-book': () => import('@/components/BrandBook'),
+  'brand-elements': () => import('@/components/BrandElementsStudio'),
+  buttons: () => import('@/components/tools/ComponentLibraryTool'),
+  colors: () => import('@/components/tools/ColorTool'),
+  'design-board': () => import('@/components/DesignBoard'),
+  opengraph: () => import('@/components/tools/OpenGraphTool'),
+  partnership: () => import('@/components/tools/TemplateTool'),
+  slides: () => import('@/components/tools/TemplateTool'),
+  terminal: () => import('@/components/tools/TerminalTool'),
+  typography: () => import('@/components/tools/TypographyTool'),
+};
+
+export function preloadToolModule(toolId: StudioToolId) {
+  return TOOL_MODULE_LOADERS[toolId]?.();
+}
+
+function ToolModuleLoading() {
+  return (
+    <div aria-busy='true' aria-label='Loading tool' className='studio-workspace-loading'>
+      <span />
+    </div>
+  );
+}
+
+function MaterialTool({ active, identity, onIdentitySave, tool }: { active: boolean; identity: BrandIdentity; onIdentitySave: (identity: BrandIdentity) => void; tool: StudioTool }) {
+  return <LogoShaderStudio active={active} automationToolId={tool.id} identity={identity} onIdentitySave={onIdentitySave} tool={{ ...tool, id: 'logo-shader' }} />;
+}
+
+function ToolPlaceholder({ tool }: { tool: StudioTool }) {
+  return (
+    <ToolShell inspector={<ControlSection title={<T>Asset inputs</T>}><UploadField accept='image/*' label='Add source asset' onFile={() => {}} /></ControlSection>} tool={tool}>
+      <div className='grid min-h-full place-items-center p-8'>
+        <div className='flex max-w-md flex-col items-center gap-4 text-center'>
+          <FileImage className='size-8 text-muted-foreground' aria-hidden='true' />
+          <h2 className='text-xl font-semibold'><T>Start with a source asset</T></h2>
+          <p className='text-sm leading-6 text-muted-foreground'>{tool.description}</p>
+        </div>
+      </div>
+    </ToolShell>
+  );
+}
+
+function StudioToolWorkspace({
+  active = true,
+  hasPendingIdentityChanges,
+  identity,
+  onAddAssets,
+  onIdentityChange,
+  onIdentitySave,
+  tool,
+}: {
+  active?: boolean;
+  hasPendingIdentityChanges: boolean;
+  identity: BrandIdentity;
+  onAddAssets?: AddBrandMedia;
+  onIdentityChange: (identity: BrandIdentity) => void;
+  onIdentitySave: (identity: BrandIdentity) => void;
+  tool: StudioTool;
+}) {
+  const renderers: Partial<Record<StudioToolId, ReactNode>> = {
+    blog: <TemplateTool identity={identity} kind='blog' tool={tool} />,
+    'brand-book': <BrandBook identity={identity} onAddAssets={onAddAssets} tool={tool} />,
+    'brand-elements': <BrandElementsStudio identity={identity} tool={tool} />,
+    buttons: <ComponentLibraryTool identity={identity} tool={tool} />,
+    colors: <ColorTool identity={identity} onIdentityChange={onIdentityChange} tool={tool} />,
+    'design-board': <DesignBoard identity={identity} tool={tool} />,
+    identity: <BrandSettingsStudio hasPendingChanges={hasPendingIdentityChanges} identity={identity} onChange={onIdentityChange} onSave={onIdentitySave} tool={tool} />,
+    material: <MaterialTool active={active} identity={identity} onIdentitySave={onIdentitySave} tool={tool} />,
+    opengraph: <OpenGraphTool key={`${identity.id}:${tool.id}`} identity={identity} tool={tool} />,
+    partnership: <TemplateTool identity={identity} kind='partnership' tool={tool} />,
+    slides: <TemplateTool identity={identity} kind='slides' tool={tool} />,
+    terminal: <TerminalTool identity={identity} tool={tool} />,
+    typography: <TypographyTool identity={identity} onIdentityChange={onIdentityChange} tool={tool} />,
+  };
+
+  return (
+    <Fragment key={`${identity.id}:${tool.id}`}>
+      {renderers[tool.id] ?? <ToolPlaceholder tool={tool} />}
+    </Fragment>
+  );
+}
+
+export default memo(StudioToolWorkspace);

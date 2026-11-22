@@ -99,6 +99,27 @@ async function main() {
     await reopened.waitForFunction(() => {
       try { return !!JSON.parse(window.glyphfield.studio.readSource()).sections?.length; } catch { return false; }
     }, null, { timeout: 90000 });
+    // Inspect the actual PowerPoint download, including the editability of the colour matrix.
+    const structure = await reopened.evaluate(() => JSON.parse(window.glyphfield.studio.readSource()));
+    const pageCount = structure.sections.filter(section => !section.hidden)
+      .reduce((count, section) => count + section.pages.filter(page => !page.hidden).length, 0);
+    const received = reopened.waitForEvent('download', { timeout: 150000 });
+    await reopened.getByRole('button', { name: 'Export PowerPoint' }).click();
+    const deck = await received;
+    assert.match(deck.suggestedFilename(), /\.pptx$/i);
+    const deckFile = path.join(dir, 'brandbook.pptx');
+    await deck.saveAs(deckFile);
+    const entries = execFileSync('tar.exe', ['-tf', deckFile], { encoding: 'utf8' });
+    const slides = entries.split(/\r?\n/).filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name));
+    assert.equal(slides.length, pageCount);
+    const inspectDir = path.join(dir, 'presentation');
+    await fs.mkdir(inspectDir);
+    execFileSync('tar.exe', ['-xf', deckFile, '-C', inspectDir, ...slides]);
+    const slideContents = await Promise.all(slides.map(name => fs.readFile(path.join(inspectDir, name), 'utf8')));
+    const matrix = slideContents.find(xml => xml.includes('Schriftfarbe') && xml.includes('Hintergrund'));
+    assert.ok(matrix?.includes('<a:t>Aa</a:t>'), 'Contrast samples must remain editable text');
+    assert.ok((matrix.match(/<p:sp>/g) || []).length > 18, 'Separate editable matrix shapes');
+    assert.ok(slideContents.some(xml => xml.includes('<p:pic>')), 'Embedded pictures in slides');
     // The browser edition uses the browser print dialog. Exercise that entry
     // and the corresponding Chromium print stylesheet without a modal in CI.
     await reopened.evaluate(() => {

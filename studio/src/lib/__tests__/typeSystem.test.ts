@@ -99,7 +99,7 @@ describe('type scale', () => {
   it('names ratios, clamps values and drops default role steps', () => {
     expect(typeScaleRatioName(1.333)).toBe('Perfect fourth');
     expect(typeScaleRatioName(1.3)).toBeNull();
-    expect(clampTypeScale({ basePx: 40, ratio: 1, roleSteps: { Body: 'body', Display: 'h1' } })).toEqual({ basePx: 24, ratio: 1.067, roleSteps: { Display: 'h1' } });
+    expect(clampTypeScale({ basePx: 40, ratio: 1, roleSteps: { Body: 'body', Display: 'h1' } })).toEqual({ basePx: 40, ratio: 1.067, roleSteps: { Display: 'h1' } });
   });
 
   it('sets each role on its scale step', () => {
@@ -174,14 +174,14 @@ describe('Typography source', () => {
     });
     expect(next.identity.typeScale).toEqual({ basePx: 18, ratio: 1.25, roleSteps: { Display: 'h1' } });
     expect(next.identity.typography.find(({ role }) => role === 'Display')).toMatchObject({ opticalSize: 32, slant: 6 });
-    expect(next.specimen).toMatchObject({ align: 'center', measure: 90, sampleText: 'Hola' });
+    expect(next.specimen).toMatchObject({ align: 'center', measure: 200, sampleText: 'Hola' });
     const cleared = applyTypographySource(next.identity, next.specimen, { typography: [{ opticalSize: null, role: 'Display' }] });
     expect(cleared.identity.typography.find(({ role }) => role === 'Display')!.opticalSize).toBeUndefined();
   });
 
   it('rejects invalid scales, steps and axis values with a field path', () => {
     expect(() => applyTypographySource(GT_BRAND_IDENTITY, specimen, { typography: 'nope' })).toThrow('typography must be an array');
-    expect(() => applyTypographySource(GT_BRAND_IDENTITY, specimen, { typeScale: { ratio: 3 }, typography: [] })).toThrow('typeScale.ratio');
+    expect(() => applyTypographySource(GT_BRAND_IDENTITY, specimen, { typeScale: { ratio: 0 }, typography: [] })).toThrow('typeScale.ratio');
     expect(() => applyTypographySource(GT_BRAND_IDENTITY, specimen, { typeScale: { roleSteps: { Display: 'huge' } }, typography: [] })).toThrow('typeScale.roleSteps.Display');
     expect(() => applyTypographySource(GT_BRAND_IDENTITY, specimen, { typography: [{ opticalSize: 500, role: 'Body' }] })).toThrow('opticalSize');
   });

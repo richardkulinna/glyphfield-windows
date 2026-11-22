@@ -40,12 +40,12 @@ function textFile(name: string, mimeType: string, content: string): BrandKitFile
   return { bytes: new TextEncoder().encode(content), mimeType, name };
 }
 
-export function brandKitTextFile(identity: BrandIdentity, format: Exclude<BrandKitFormat, 'logos' | 'zip'>, project?: unknown): BrandKitFile {
+export function brandKitTextFile(identity: BrandIdentity, format: Exclude<BrandKitFormat, 'logos' | 'zip'>, project?: unknown, authored = identity): BrandKitFile {
   if (format === 'dtcg') return textFile(BRAND_KIT_FILE_NAMES.dtcg, 'application/json', `${JSON.stringify(brandDesignTokens(identity), null, 2)}\n`);
   const fontFaces = brandKitFontFaces(identity);
   if (format === 'css') return textFile(BRAND_KIT_FILE_NAMES.css, 'text/css', brandCssVariables(identity, { fontFaces }));
   if (format === 'tailwind') return textFile(BRAND_KIT_FILE_NAMES.tailwind, 'text/css', brandTailwindTheme(identity, { fontFaces }));
-  return textFile(BRAND_KIT_FILE_NAMES.markdown, 'text/markdown', brandGuidelinesMarkdown(identity, project));
+  return textFile(BRAND_KIT_FILE_NAMES.markdown, 'text/markdown', brandGuidelinesMarkdown(identity, project, authored));
 }
 
 /** Decode a data: URL into bytes without a network request. */

@@ -492,7 +492,7 @@ function TypeScale({ identity, update }: { identity: BrandIdentity; update: Bran
   return (
     <Panel description={<T>Every size comes from one base and one ratio, so hierarchy stays consistent across layouts and exported tokens.</T>} title={<T>Type scale</T>}>
       <div className={styles.formGrid}>
-        <RangeField label={<T>Base size</T>} max={24} min={12} onChange={(basePx) => update({ typeScale: { ...scale, basePx } })} suffix='px' value={scale.basePx} />
+        <RangeField openMax label={<T>Base size</T>} max={24} min={12} onChange={(basePx) => update({ typeScale: { ...scale, basePx } })} suffix='px' value={scale.basePx} />
         <Field label={<T>Scale ratio</T>}>
           <StudioSelect ariaLabel={gt('Scale ratio')} onValueChange={(ratio) => update({ typeScale: { ...scale, ratio: Number(ratio) } })} options={SCALE_RATIOS.some(({ value }) => value === scale.ratio) ? SCALE_RATIOS.map(({ label, value }) => ({ label, value: String(value) })) : [...SCALE_RATIOS, { label: `Custom · ${scale.ratio}`, value: scale.ratio }].map(({ label, value }) => ({ label, value: String(value) }))} value={String(scale.ratio)} />
         </Field>
@@ -552,8 +552,8 @@ function TypeRoles({ fonts, identity, update }: { fonts: BrandFontAsset[]; ident
                 {bounds.max > bounds.min
                   ? <RangeField label={<T>Weight</T>} max={Math.min(bounds.max, MAX_VISIBLE_FONT_WEIGHT)} min={Math.min(bounds.min, MAX_VISIBLE_FONT_WEIGHT)} onChange={setWeight} step={1} value={typography.weight ?? 400} />
                   : <Field label={<T>Weight</T>}><output>{bounds.min}</output></Field>}
-                <RangeField label={<T>Line height</T>} max={2} min={0.7} onChange={(lineHeight) => updateTypography(role, { lineHeight })} step={0.05} value={typography.lineHeight ?? 1.5} />
-                <RangeField label={<T>Tracking</T>} max={12} min={-8} onChange={(letterSpacing) => updateTypography(role, { letterSpacing })} step={0.25} suffix='px' value={typography.letterSpacing ?? 0} />
+                <RangeField openMax label={<T>Line height</T>} max={2} min={0.7} onChange={(lineHeight) => updateTypography(role, { lineHeight })} step={0.05} value={typography.lineHeight ?? 1.5} />
+                <RangeField openMax openMin label={<T>Tracking</T>} max={12} min={-8} onChange={(letterSpacing) => updateTypography(role, { letterSpacing })} step={0.25} suffix='px' value={typography.letterSpacing ?? 0} />
               </div>
             </article>
           );
@@ -589,8 +589,8 @@ export function SystemSection({ identity, update, onUploadDrawing }: { identity:
         <Field label={<T>Interface density</T>}><StudioSelect ariaLabel={gt('Interface density')} onValueChange={(density) => style({ density: density as BrandIdentity['style']['density'] })} options={[{ label: gt('Compact'), value: 'compact' }, { label: gt('Comfortable'), value: 'comfortable' }, { label: gt('Spacious'), value: 'spacious' }]} value={identity.style.density} /></Field>
         <Field label={<T>Image treatment</T>}><StudioSelect ariaLabel={gt('Image treatment')} onValueChange={(imageTreatment) => style({ imageTreatment: imageTreatment as BrandIdentity['style']['imageTreatment'] })} options={[{ label: gt('Natural'), value: 'natural' }, { label: gt('Monochrome'), value: 'monochrome' }, { label: gt('Duotone'), value: 'duotone' }]} value={identity.style.imageTreatment} /></Field>
         <Field label={<T>Construction field</T>}><StudioSelect ariaLabel={gt('Construction field')} onValueChange={(grid) => style({ grid: grid as BrandIdentity['style']['grid'] })} options={[{ label: gt('None'), value: 'none' }, { label: gt('Dots'), value: 'dots' }, { label: gt('Lines'), value: 'lines' }]} value={identity.style.grid} /></Field>
-        <RangeField label={<T>Corner radius</T>} max={32} min={0} onChange={(borderRadius) => style({ borderRadius })} suffix='px' value={identity.style.borderRadius} />
-        <RangeField label={<T>Default logo scale</T>} max={160} min={40} onChange={(logoScale) => style({ logoScale })} suffix='%' value={identity.style.logoScale} />
+        <RangeField openMax label={<T>Corner radius</T>} max={32} min={0} onChange={(borderRadius) => style({ borderRadius })} suffix='px' value={identity.style.borderRadius} />
+        <RangeField openMax label={<T>Default logo scale</T>} max={160} min={40} onChange={(logoScale) => style({ logoScale })} suffix='%' value={identity.style.logoScale} />
       </Panel>
       <Panel description={<T>The recognizable device and rules that keep applications related.</T>} title={<T>Graphic system</T>}>
         <Field label={<T>Recognizable device</T>}><input className={INPUT_CLASS} onChange={(event) => graphic({ device: event.target.value })} value={identity.graphicSystem.device} /></Field>

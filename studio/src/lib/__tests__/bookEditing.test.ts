@@ -54,3 +54,32 @@ describe('custom brand book editor', () => {
     expect(()=>parseBookSource(GT_BRAND_IDENTITY,duplicate,{})).toThrow(/Duplicate/);
   });
 });
+
+describe('editable visual pages', () => {
+  it('preserves layout and captions for removed pages across source export, import and restoration', () => {
+    const page = 'logo-clearspace';
+    const state = updateBookPage(GT_BRAND_IDENTITY, {}, page, {
+      layout: {clearSpaceInset:-24, clearSpaceXSize:160, clearSpaceLogoWidth:140, layers:[{...layer, x:-15, width:240, scale:6}]},
+      copy: {unit:'Measured from mark'},
+    });
+    const removed = {...state, structure:{removedPages:[page]}};
+    const source = bookSource(GT_BRAND_IDENTITY, removed);
+    expect(source.sections.flatMap(section => section.pages).some(item => item.id === page)).toBe(false);
+    const restored = parseBookSource(GT_BRAND_IDENTITY, source, {});
+    expect(restored.pages?.[page]).toEqual(state.pages?.[page]);
+    const active = resolveBook(GT_BRAND_IDENTITY, { ...restored, structure:{} }).flatMap(section => section.pages);
+    expect(active.find(item => item.id === page)?.layout?.layers?.[0]?.width).toBe(240);
+  });
+  it('pages every matrix row and column and includes every icon when libraries grow', () => {
+    const base = GT_BRAND_IDENTITY;
+    const identity = {...base,
+      colors:Array.from({length:17},(_,i)=>({...base.colors[0]!,id:'color-'+i})),
+      assets:Array.from({length:13},(_,i)=>({...base.assets[0]!,id:'icon-'+i,type:'icon' as const,tags:['icon-pack:custom']}))
+    };
+    const pages = resolveBook(identity, {}).flatMap(section => section.pages);
+    expect(pages.filter(page => page.kind === 'colourPairings')).toHaveLength(9);
+    expect(pages.find(page => page.id === 'colour-pairings-r2-c2')).toMatchObject({rowStart:16,columnStart:16});
+    expect(pages.filter(page => page.kind === 'colourTints')).toHaveLength(3);
+    expect(pages.filter(page => page.kind === 'deviceIcons').map(page => page.rowStart)).toEqual([0,12]);
+  });
+});

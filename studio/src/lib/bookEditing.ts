@@ -11,6 +11,9 @@ export type BookLayer = {
 };
 
 export type BookLayout = {
+  clearSpaceInset?: number;
+  clearSpaceXSize?: number;
+  clearSpaceLogoWidth?: number;
   background?: string;
   foreground?: string;
   accent?: string;
@@ -61,7 +64,7 @@ function customId(value: unknown): string {
   if (!id.startsWith('custom-')) throw new TypeError('New page or section identifiers must start with custom-.');
   return id;
 }
-function number(value: unknown, min: number, max: number): number {
+function number(value: unknown, min = -Infinity, max = Infinity): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max)
     throw new RangeError('Brand book position or scale outside its range.');
   return value;
@@ -108,6 +111,10 @@ export function readLayout(value: unknown): BookLayout | undefined {
   for (const key of ['templateX', 'templateY'] as const)
     if (row[key] !== undefined && row[key] !== 0) out[key] = number(row[key], -100, 100);
   if (row.templateScale !== undefined && row.templateScale !== 1) out.templateScale = number(row.templateScale, 0.25, 3);
+  if (row.clearSpaceInset !== undefined) out.clearSpaceInset = number(row.clearSpaceInset);
+  for (const key of ['clearSpaceXSize', 'clearSpaceLogoWidth'] as const) {
+    if (row[key] !== undefined) out[key] = number(row[key], 0);
+  }
   if (row.excludedColors !== undefined) out.excludedColors = entries(row.excludedColors, (id) => string(id, 200));
   if (row.misuse !== undefined)
     out.misuse = entries(row.misuse, (value) => {
@@ -125,10 +132,10 @@ export function readLayout(value: unknown): BookLayout | undefined {
         text: string(a.text),
         asset: string(a.asset, 200),
         color: string(a.color, 200),
-        x: number(a.x, 0, 99),
-        y: number(a.y, 0, 99),
-        width: number(a.width, 2, 100),
-        scale: number(a.scale, 0.25, 3),
+        x: number(a.x),
+        y: number(a.y),
+        width: number(a.width, 0),
+        scale: number(a.scale, 0),
       };
     });
     if (new Set(layers.map((a) => a.id)).size !== layers.length) throw new RangeError('Duplicate page element identifier.');

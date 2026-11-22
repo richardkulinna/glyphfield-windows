@@ -899,7 +899,14 @@ export function isEditedBuiltInIdentity(identity: BrandIdentity): boolean {
 
 /** Fill defaults and copy nested records without dropping unknown fields. */
 export function normalizeBrandIdentity(identity: BrandIdentity): BrandIdentity {
-  return cloneBrandIdentity(identity);
+  return cloneBrandIdentity({
+    ...identity,
+    shortName: identity.shortName ?? '',
+    tagline: identity.tagline ?? '',
+    description: identity.description ?? '',
+    positioning: identity.positioning ?? '',
+    website: identity.website ?? '',
+  });
 }
 
 export function hydrateBrandIdentities(value: unknown): BrandIdentity[] {

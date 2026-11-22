@@ -46,7 +46,7 @@ import {
   type BookSection,
   type BookPageOverride,
 } from '@/lib/brandBookModel';
-import { BRAND_SURFACE_TONE_LABELS, BRAND_SURFACE_TONES, brandPalette, trackingFor, type BrandSurfaceTone } from '@/lib/brandOutputKit';
+import { BRAND_SURFACE_TONE_LABELS, BRAND_SURFACE_TONES, brandPalette, brandSurface, trackingFor, type BrandSurfaceTone } from '@/lib/brandOutputKit';
 import { parseSourceObject, stringifySource } from '@/lib/sourceCode';
 import type { StudioTool } from '@/lib/studioCatalog';
 import { studioToolActionNames } from '@/lib/studioAgentCapabilities';
@@ -55,9 +55,10 @@ import { capVisibleFontWeight } from '@/lib/typography';
 import { useCommittedRef } from '@/hooks/useCommittedRef';
 import { useStudioDraft } from '@/hooks/usePersistentState';
 
-import { BookStructureControls } from './BookStructureControls';
-import { LayoutInspector } from './BookLayoutEditor';
-import { MISUSE, BookPageView, type BookPageContext } from './brandBookPages';
+import { BookStructureControls, type ArchivedBookEntry } from './BookStructureControls';
+import { BookColorField, LayoutInspector, type AddBookAssets } from './BookLayoutEditor';
+import { BOOK_LOGO_RULES } from '@/lib/bookLogoRules';
+import { BookPageView, type BookPageContext } from './brandBookPages';
 import { LabInspectorSection, StudioSidebar } from './LabWorkspace';
 import SourceCodeDrawer from './LazySourceCodeDrawer';
 import StudioFileMenu from './StudioFileMenu';
@@ -112,7 +113,7 @@ function rootStyle(identity: BrandIdentity, thumbnailWidth: number): CSSProperti
   } as CSSProperties;
 }
 
-export default function BrandBook({ identity, tool }: { identity: BrandIdentity; tool: StudioTool }) {
+export default function BrandBook({ identity, tool, onAddAssets }: { identity: BrandIdentity; tool: StudioTool; onAddAssets?: AddBookAssets }) {
   const gt = useGT();
   const scope = `bb${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const studioRootRef = useRef<HTMLDivElement>(null);
@@ -120,9 +121,10 @@ export default function BrandBook({ identity, tool }: { identity: BrandIdentity;
   const [currentPageId, setCurrentPageId] = useState<string>('cover');
   const [thumbnailWidth, setThumbnailWidth] = useState(272);
   const [selectedLayer, setSelectedLayer] = useState('');
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   const [exportError, setExportError] = useState('');
   const exportBusy = useRef(false);
-  const [undoRemoval, setUndoRemoval] = useState<{ removedPage?: string; removedSection?: string } | null>(null);
+
   const templates = useMemo(() => Object.values(bookPageDefinitions(identity)).flat(), [identity]);
   const [sourceOpen, setSourceOpen] = useState(false);
   // Overview rows far from the viewport render placeholders; printing renders every page.
@@ -131,6 +133,15 @@ export default function BrandBook({ identity, tool }: { identity: BrandIdentity;
   const [storedOverrides, setStoredOverrides] = useStudioDraft<BookOverrides>(identity.id, tool.id, 'book', {});
   const overrides = useMemo(() => sanitizeBookOverrides(identity, storedOverrides), [identity, storedOverrides]);
   const sections = useMemo(() => resolveBook(identity, overrides), [identity, overrides]);
+  const archived = useMemo<ArchivedBookEntry[]>(() => {
+    const structure = overrides.structure;
+    if (!structure?.removedPages?.length && !structure?.removedSections?.length) return [];
+    const complete = resolveBook(identity, { ...overrides, structure: { ...structure, removedPages: [], removedSections: [] } });
+    return complete.flatMap(section => [
+      ...(structure.removedSections?.includes(section.id) ? [{ id: section.id, group: section.id, title: section.name, kind: 'section' as const }] : []),
+      ...section.pages.filter(page => structure.removedPages?.includes(page.id)).map(page => ({ id: page.id, group: section.id, title: page.title, kind: 'page' as const })),
+    ]);
+  }, [identity, overrides]);
   const palette = useMemo(() => brandPalette(identity), [identity]);
   const visible = useMemo(() => visibleBookPages(sections), [sections]);
   const folios = useMemo(() => new Map(visible.map((page) => [page.id, page.folio])), [visible]);
@@ -209,7 +220,7 @@ export default function BrandBook({ identity, tool }: { identity: BrandIdentity;
     document.getElementById(`brand-book-${identity.id}-${sectionId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'start' });
   }
 
-  async function printBook() {
+  async function exportBook(format: 'pdf' | 'pptx', propagate = false) {
     if (exportBusy.current) return;
     exportBusy.current = true;
     setExportError('');
@@ -230,11 +241,18 @@ export default function BrandBook({ identity, tool }: { identity: BrandIdentity;
       try { await Promise.race([decoding, new Promise<void>(finish => {timeout = setTimeout(finish, 5000);})]); }
       finally { clearTimeout(timeout); }
       const missingCount = pending.size + missing.size;
-      if (window.glyphfieldDesktop?.saveBrandBookPdf) await window.glyphfieldDesktop.saveBrandBookPdf();
+      let unavailable: string[] = [];
+      if (format === 'pptx') {
+        const { exportBookPowerPoint } = await import('@/lib/bookPowerPoint');
+        if (!canvasRef.current) throw new Error('The book canvas is unavailable.');
+        unavailable = await exportBookPowerPoint(canvasRef.current, identity.name, identity.fonts);
+      } else if (window.glyphfieldDesktop?.saveBrandBookPdf) await window.glyphfieldDesktop.saveBrandBookPdf();
       else window.print();
-      if (missingCount) setExportError('Unavailable images in this export: '+missingCount+'. Reconnect their source or replace them in the asset library.');
+      if (unavailable.length) setExportError('Unavailable images: ' + unavailable.join(', '));
+      else if (missingCount) setExportError('Unavailable images in this export: '+missingCount+'. Reconnect their source or replace them in the asset library.');
     } catch (error) {
       setExportError(error instanceof Error ? error.message : 'Could not export the brand book.');
+      if (propagate) throw error;
     } finally {
       setPrinting(false); setMode(previousMode); exportBusy.current = false;
     }
@@ -257,20 +275,23 @@ export default function BrandBook({ identity, tool }: { identity: BrandIdentity;
     if (kind === 'page') {
       if (readerPages.length <= 1) return;
       commit({ ...overrides, structure:{...structure,removedPages:[...(structure.removedPages ?? []),current.page.id]} });
-      setUndoRemoval({removedPage:current.page.id});
+
     } else {
       if (['intro','closing'].includes(current.section.id) || !readerPages.some(r=>r.section.id!==current.section.id)) return;
       commit({ ...overrides, structure:{...structure,removedSections:[...(structure.removedSections ?? []),current.section.id]} });
-      setUndoRemoval({removedSection:current.section.id});
+
     }
     setMode('overview');
   }
 
-  function restoreRemoval() {
+  function restoreRemoval(entry: ArchivedBookEntry) {
     const structure = overrides.structure;
-    if (!structure || !undoRemoval) return;
-    commit({...overrides,structure:{...structure, removedPages:structure.removedPages?.filter(id=>id!==undoRemoval.removedPage), removedSections:structure.removedSections?.filter(id=>id!==undoRemoval.removedSection)}});
-    setUndoRemoval(null);
+    if (!structure) return;
+    commit({ ...overrides, structure: { ...structure,
+      removedPages: structure.removedPages?.filter(id => entry.kind !== 'page' || id !== entry.id),
+      removedSections: structure.removedSections?.filter(id => id !== entry.group),
+    } });
+    if (entry.kind === 'page') openPage(entry.id);
   }
 
   function movePage(delta: number) {
@@ -308,35 +329,37 @@ export default function BrandBook({ identity, tool }: { identity: BrandIdentity;
     commit(parseBookSource(identity, parsed, overrides));
   }
 
-  const automationRef = useCommittedRef({ applySource, printBook, readSource });
+  const automationRef = useCommittedRef({ applySource, exportBook, readSource });
   useEffect(() => registerStudioAutomation({
     actions: studioToolActionNames('brand-book'),
     applySource: (source) => automationRef.current.applySource(source),
     getSource: () => automationRef.current.readSource(),
     invoke: (action) => {
-      if (action !== 'brand-book.print') throw new RangeError(`Unknown Brand book action: ${action}.`);
-      return automationRef.current.printBook().then(() => null);
+      if (action !== 'brand-book.print' && action !== 'brand-book.export.pptx') throw new RangeError(`Unknown Brand book action: ${action}.`);
+      return automationRef.current.exportBook(action === 'brand-book.print' ? 'pdf' : 'pptx', true).then(() => null);
     },
     toolId: 'brand-book',
   }, studioRootRef.current), [automationRef]);
 
   return (
-    <div className={styles.root} data-brand={identity.id} data-flavor={identity.artDirection.preview} data-mode={mode} ref={studioRootRef} style={style}>
+    <div className={styles.root} data-brand={identity.id} data-flavor={identity.artDirection.preview} data-mode={mode} data-exporting={printing || undefined} ref={studioRootRef} style={style}>
       <StudioToolHeader
         actions={(
           <>
             <StudioFileMenu onSource={() => setSourceOpen(true)} />
-            <button className={styles.exportButton} disabled={printing || !visible.length} onClick={printBook} type='button'><Download aria-hidden='true' /><span><T>Export PDF</T></span></button>
+            <button className={styles.pdfButton} aria-label="Export PDF" disabled={printing || !visible.length} onClick={() => void exportBook('pdf')} type='button'><Download aria-hidden='true' /><span><T>Export PDF</T></span></button>
+            <button className={styles.exportButton} aria-label="Export PowerPoint" disabled={printing || !visible.length} onClick={() => void exportBook('pptx')} type="button"><Download aria-hidden="true" /><span>PowerPoint</span></button>
           </>
         )}
         context={mode === 'overview' ? (
           <label className={styles.zoomControl}>
             <Minus aria-hidden='true' />
-            <StudioRange aria-label={gt('Page thumbnail size')} max='420' min='200' onChange={(event) => setThumbnailWidth(Number(event.target.value))} value={thumbnailWidth} />
+            <StudioRange aria-label={gt('Page thumbnail size')} max='420' min='100' openMax onValueCommit={setThumbnailWidth} onChange={(event) => setThumbnailWidth(Number(event.target.value))} value={thumbnailWidth} />
             <Plus aria-hidden='true' />
           </label>
         ) : (
-          <span className={styles.pageCounter}>{currentIndex + 1} / {readerPages.length}</span>
+          <div className={styles.readerTools}><span className={styles.pageCounter}>{currentIndex + 1} / {readerPages.length}</span>
+            <button type="button" aria-pressed={inspectorOpen} onClick={() => setInspectorOpen(open => !open)}>Page controls</button></div>
         )}
         metadata={`${identity.name} · ${visible.length} pages`}
         navigation={<div className={styles.modeSwitch}>
@@ -349,14 +372,15 @@ export default function BrandBook({ identity, tool }: { identity: BrandIdentity;
       />
 
       {exportError && <p role='alert'>{exportError}</p>}
-      <div className={styles.body} data-inspector={mode === 'reader' || undefined}>
+      <div className={styles.body} data-inspector={(mode === 'reader' && inspectorOpen) || undefined}>
         <aside className={styles.navigator}>
           <div className={styles.navigatorIdentity}>
             <div><ThemeAwareBrandMark className={styles.navigatorMark} identity={identity} /></div>
             <span><strong>{identity.name}</strong><small>Brand book / rev. {identity.revision}</small></span>
           </div>
-          <BookStructureControls sections={sections} templates={templates} currentSection={current.section.id} onCreate={createPage} onUndo={undoRemoval ? restoreRemoval : undefined} />
+          <BookStructureControls sections={sections} templates={templates} currentSection={current.section.id} onCreate={createPage} archived={archived} onRestore={restoreRemoval} />
           <button className={styles.navIntroduction} onClick={() => jumpToSection('intro')} type='button'><strong>Introduction</strong><small>{sections.find(s=>s.id==='intro')?.pages.length}</small></button>
+          {mode === 'reader' && <div className={styles.pageJump}><StudioSelect ariaLabel="Go to page" value={current.page.id} onValueChange={openPage} options={readerPages.map(({page, section}) => ({ value: page.id, label: section.name + ' / ' + page.title }))}/></div>}
           <nav aria-label={gt('Brand book sections')}>
             {sections.filter(s=>s.id!=='intro' && s.id!=='closing').map((section, index, order) => {
               const sectionId = section.id;
@@ -376,6 +400,7 @@ export default function BrandBook({ identity, tool }: { identity: BrandIdentity;
               );
             })}
           </nav>
+          <button className={styles.navIntroduction} onClick={() => jumpToSection('closing')} type="button"><strong>Closing</strong><small>{sections.find(item => item.id === 'closing')?.pages.length}</small></button>
           <div className={styles.navigatorPalette}>{identity.colors.slice(0, 8).map((color) => <span key={color.id} style={{ background: color.hex }} title={`${color.name} ${color.hex}`} />)}</div>
         </aside>
 
@@ -407,9 +432,10 @@ export default function BrandBook({ identity, tool }: { identity: BrandIdentity;
           )}
         </main>
 
-        {mode === 'reader' ? (
+        {mode === 'reader' && inspectorOpen ? (
           <PageInspector
             imageOptions={imageOptions}
+            onAddAssets={onAddAssets}
             onPage={(patch) => commit(updateBookPage(identity, overrides, current.page.id, patch))}
             onReset={() => commit(resetBookPage(overrides, current.page.id))}
             onSection={(patch) => commit(updateBookSection(overrides, current.section.id, patch))}
@@ -461,6 +487,7 @@ const OverviewRow = memo(function OverviewRow({ base, eager, folios, id, onOpen,
   const render = eager || near;
   return (
     <section className={styles.overviewRow} data-hidden={section.hidden || undefined} id={id} ref={rowRef}>
+      <h2 className={styles.overviewChapter}>{section.name}</h2>
       {section.pages.map((page) => (
         <button className={styles.pageButton} data-hidden={page.hidden || section.hidden || undefined} key={page.id} onClick={() => onOpen(page.id)} type='button'>
           {render
@@ -474,87 +501,109 @@ const OverviewRow = memo(function OverviewRow({ base, eager, folios, id, onOpen,
 });
 
 function PageInspector({
-  entry, identity, selected, select, move, remove, canRemove,
-  imageOptions,
-  onPage,
-  onReset,
-  onSection,
+  entry, identity, selected, select, move, remove, canRemove, imageOptions, onPage, onReset, onSection, onAddAssets,
 }: {
-  entry: ReaderEntry;
-  identity: BrandIdentity; selected: string; select: (id:string)=>void;
-  move: (delta:number)=>void; remove: (kind:'page'|'section')=>void; canRemove:boolean;
+  entry: ReaderEntry; identity: BrandIdentity; selected: string; select: (id: string) => void;
+  move: (delta: number) => void; remove: (kind: 'page'|'section') => void; canRemove: boolean;
   imageOptions: ReadonlyArray<{ label: string; value: string }>;
-  onPage: (patch: BookPageOverride) => void;
-  onReset: () => void;
-  onSection: (patch: { hidden?: boolean; move?: -1 | 1 }) => void;
+  onPage: (patch: BookPageOverride) => void; onReset: () => void;
+  onSection: (patch: { hidden?: boolean; move?: -1|1 }) => void; onAddAssets?: AddBookAssets;
 }) {
   const gt = useGT();
-  const { page, section } = entry;
+  const {page, section} = entry;
+  const [tab, setTab] = useState<'Content'|'Elements'|'Style'>('Content');
   const reorderable = section.id !== 'intro' && section.id !== 'closing';
-  const pageIndex = section.pages.findIndex(p => p.id === page.id);
+  const pageIndex = section.pages.findIndex(item => item.id === page.id);
+  const layout = page.layout ?? {};
+  const updateLayout = (patch: Partial<typeof layout>) => onPage({layout: {...layout, ...patch}});
+  const palette = brandPalette(identity);
+  const surface = brandSurface(palette, page.tone);
   return (
-    <StudioSidebar className={styles.inspector} label={gt('Brand book page controls')} side='right' storageKey='brand-book-inspector'>
-      <LabInspectorSection action={(
-        <Button aria-label={gt('Reset page')} onClick={onReset} size='icon-xs' title={gt('Reset page')} type='button' variant='ghost'>
-          <RotateCcw aria-hidden='true' />
-        </Button>
-      )} meta={page.id} title={page.title}>
-        <label className='element-editor-toggle'>
-          <span><T>Show page</T></span>
-          <StudioCheckbox aria-label='Show page' checked={!page.hidden} onChange={(event) => onPage({ hidden: !event.target.checked })} variant='switch' />
-        </label>
-        <div className='element-editor-field'>
-          <span><T>Layout</T></span>
-          <StudioSelect ariaLabel='Page layout' onValueChange={(variant) => onPage({ variant })} options={page.variants.map((variant) => ({ label: BOOK_VARIANT_LABELS[variant] ?? variant, value: variant }))} value={page.variant} />
-        </div>
-        <div className='element-editor-field'>
-          <span><T>Surface</T></span>
-          <StudioSelect ariaLabel='Page surface' onValueChange={(tone) => onPage({ tone: tone as BrandSurfaceTone })} options={BRAND_SURFACE_TONES.map((tone) => ({ label: BRAND_SURFACE_TONE_LABELS[tone], value: tone }))} value={page.tone} />
-        </div>
-        {page.image ? (
-          <div className='element-editor-field'>
-            <span><T>Image</T></span>
-            <StudioSelect ariaLabel='Page image' onValueChange={(assetId) => onPage({ assetId: assetId === 'none' ? '' : assetId })} options={[{ label: 'Graphic device', value: 'none' }, ...imageOptions]} value={page.assetId || 'none'} />
-          </div>
-        ) : null}
-      </LabInspectorSection>
-      <LabInspectorSection title='Page arrangement'>
-        <div className={styles.editorActions}>
-          <button type='button' disabled={pageIndex===0} onClick={()=>move(-1)}>Earlier</button>
-          <button type='button' disabled={pageIndex===section.pages.length-1} onClick={()=>move(1)}>Later</button>
-          <button type='button' disabled={!canRemove} onClick={()=>remove('page')}>Remove page</button>
-        </div>
-        <LayoutInspector identity={identity} layout={page.layout ?? {}} selected={selected} select={select} change={layout=>onPage({layout})}/>
-        {page.kind === 'logoMisuse' && <fieldset className={styles.exampleControls}><legend>Logo examples</legend>{MISUSE.map((rule,index)=>{
-          const examples = MISUSE.map((r,i)=>page.layout?.misuse?.[i] ?? {label:r.label,shown:true});
-          const example = examples[index]!;
-          function edit(patch: Partial<typeof example>) {onPage({layout:{...page.layout,misuse:examples.map((e,i)=>i===index?{...e,...patch}:e)}});}
-          return <div key={rule.label}><StudioCheckbox aria-label={'Show '+rule.label} checked={example.shown} onChange={e=>edit({shown:e.target.checked})}/><input aria-label={rule.label+' caption'} value={example.label} onChange={e=>edit({label:e.target.value})}/></div>;
-        })}</fieldset>}
-        {page.kind === 'colourPairings' && <fieldset className={styles.exampleControls}><legend>Colours in the matrix</legend>{identity.colors.map(c=><label key={c.id}><StudioCheckbox aria-label={'Show '+c.name} checked={!page.layout?.excludedColors?.includes(c.id)} onChange={e=>onPage({layout:{...page.layout, excludedColors:e.target.checked?(page.layout?.excludedColors??[]).filter(id=>id!==c.id):[...(page.layout?.excludedColors??[]),c.id]}})}/>{c.name}</label>)}</fieldset>}
-      </LabInspectorSection>
-      <LabInspectorSection title={<T>Copy</T>}>
-        <p className='text-xs leading-5 text-muted-foreground'><T>Click any text on the page to edit it in place.</T></p>
-        {Object.entries(page.copy).map(([slot, value]) => (
-          <label className='element-editor-field' key={slot}>
-            <span className='capitalize'>{slot}</span>
-            <textarea aria-label={`Page ${slot} copy`} className='min-h-16 resize-y rounded-md border border-input bg-background px-3 py-2 text-sm leading-5 outline-none focus:border-foreground' maxLength={Math.max(value.length, 8192)} onChange={(event) => onPage({ copy: { [slot]: event.target.value } })} value={value} />
-          </label>
-        ))}
-      </LabInspectorSection>
-      {reorderable ? (
-        <LabInspectorSection meta={section.hidden ? 'Hidden' : undefined} title={section.name}>
-          <label className='element-editor-toggle'>
-            <span><T>Show section</T></span>
-            <StudioCheckbox aria-label='Show section' checked={!section.hidden} onChange={(event) => onSection({ hidden: !event.target.checked })} variant='switch' />
-          </label>
-          <div className='grid grid-cols-2 gap-2'>
-            <Button onClick={() => onSection({ move: -1 })} size='sm' type='button' variant='outline'><ArrowUp aria-hidden='true' /><T>Earlier</T></Button>
-            <button type='button' onClick={()=>remove('section')}>Remove section</button>
-            <Button onClick={() => onSection({ move: 1 })} size='sm' type='button' variant='outline'><ArrowDown aria-hidden='true' /><T>Later</T></Button>
+    <StudioSidebar className={styles.inspector} label={gt('Brand book page controls')} side="right" storageKey="brand-book-inspector">
+      <div className={styles.inspectorHeading}><small>{section.name}</small><strong>{page.title}</strong></div>
+      <div role="group" aria-label="Page settings" className={styles.inspectorTabs}>
+        {(['Content','Elements','Style'] as const).map(item => <button type="button" key={item} aria-pressed={tab === item} onClick={() => setTab(item)}>{item}</button>)}
+      </div>
+      {tab === 'Content' && <>
+        {page.kind === 'logoClearspace' && <LabInspectorSection title="Clear space diagram">
+          {([
+            ['clearSpaceInset','Guide distance (%)',12,-35,60],
+            ['clearSpaceXSize','X marker size (%)',12,0,60],
+            ['clearSpaceLogoWidth','Logo width (%)',56,1,100],
+          ] as const).map(([key,label,base,min,max]) => <label className={styles.diagramField} key={key}>
+            <span>{label}</span><output>{layout[key] ?? base}</output>
+            <StudioRange aria-label={label} min={min} max={max} step={0.5} openMin={key === 'clearSpaceInset'} openMax
+              value={layout[key] ?? base} onValueCommit={value => updateLayout({[key]:value})} onChange={event => updateLayout({[key]:Number(event.target.value)})}/>
+          </label>)}
+        </LabInspectorSection>}
+        {page.kind === 'logoMisuse' && <LabInspectorSection title="Logo examples">
+          <div className={styles.exampleControls}>{BOOK_LOGO_RULES.map((rule, index) => {
+            const examples = BOOK_LOGO_RULES.map((item, i) => layout.misuse?.[i] ?? {label:item.label, shown:true});
+            const example = examples[index]!;
+            const edit = (patch: Partial<typeof example>) => updateLayout({misuse:examples.map((item,i) => i === index ? {...item,...patch} : item)});
+            return <div key={rule.label}>
+              <StudioCheckbox aria-label={'Show '+rule.label} checked={example.shown} onChange={event => edit({shown:event.target.checked})}/>
+              <input aria-label={rule.label+' caption'} value={example.label} onChange={event => edit({label:event.target.value})}/>
+            </div>;
+          })}</div>
+        </LabInspectorSection>}
+        {page.kind.startsWith('colourPairings') && <LabInspectorSection title="Matrix colours">
+          <div className={styles.exampleControls}>{identity.colors.map(color => <label key={color.id}>
+            <StudioCheckbox aria-label={'Show '+color.name} checked={!layout.excludedColors?.includes(color.id)} onChange={event => {
+              const ids = layout.excludedColors ?? [];
+              updateLayout({excludedColors:event.target.checked ? ids.filter(id => id !== color.id) : [...ids,color.id]});
+            }}/>{color.name}
+          </label>)}</div>
+        </LabInspectorSection>}
+        <LabInspectorSection title="Page text">
+          {Object.entries(page.copy).map(([slot, value]) => <label className="element-editor-field" key={slot}>
+            <span className="capitalize">{slot}</span>
+            <textarea aria-label={'Page '+slot+' copy'} className="min-h-16 resize-y rounded-md border border-input bg-background px-3 py-2 text-sm leading-5 outline-none focus:border-foreground"
+              maxLength={Math.max(value.length,8192)} onChange={event => onPage({copy:{[slot]:event.target.value}})} value={value}/>
+          </label>)}
+        </LabInspectorSection>
+        <LabInspectorSection title="Page order" defaultExpanded={false}>
+          <label className="element-editor-toggle"><span>Include in export</span>
+            <StudioCheckbox aria-label="Show page" checked={!page.hidden} onChange={event => onPage({hidden:!event.target.checked})} variant="switch"/></label>
+          <div className={styles.editorActions}>
+            <button type="button" disabled={pageIndex===0} onClick={() => move(-1)}>Move earlier</button>
+            <button type="button" disabled={pageIndex===section.pages.length-1} onClick={() => move(1)}>Move later</button>
+            <button type="button" disabled={!canRemove} onClick={() => remove('page')}>Remove page</button>
           </div>
         </LabInspectorSection>
-      ) : null}
+      </>}
+      {tab === 'Elements' && <LabInspectorSection title="Place on this page">
+        <LayoutInspector identity={identity} layout={layout} selected={selected} select={select} change={value => onPage({layout:value})} onAddAssets={onAddAssets}/>
+        {page.image && <label className="element-editor-field">Template image
+          <StudioSelect ariaLabel="Page image" value={page.assetId || 'none'}
+            onValueChange={assetId => onPage({assetId:assetId === 'none' ? '' : assetId})}
+            options={[{label:'Graphic device',value:'none'},...imageOptions]}/>
+        </label>}
+      </LabInspectorSection>}
+      {tab === 'Style' && <>
+        <LabInspectorSection title="Page design" action={<Button aria-label="Reset page" title="Reset page" onClick={onReset} size="icon-xs" type="button" variant="ghost"><RotateCcw aria-hidden="true"/></Button>}>
+          {page.variants.length > 1 && <label className="element-editor-field">Layout
+            <StudioSelect ariaLabel="Page layout" value={page.variant} onValueChange={variant => onPage({variant})}
+              options={page.variants.map(variant => ({label: BOOK_VARIANT_LABELS[variant] ?? variant, value:variant}))}/>
+          </label>}
+          <label className="element-editor-field">Surface
+            <StudioSelect ariaLabel="Page surface" value={page.tone} onValueChange={tone => onPage({tone:tone as BrandSurfaceTone})}
+              options={BRAND_SURFACE_TONES.map(tone => ({label:BRAND_SURFACE_TONE_LABELS[tone],value:tone}))}/>
+          </label>
+          {(['background','foreground','accent'] as const).map(key => <BookColorField key={key} label={'Page '+key} identity={identity}
+            fallback={key === 'accent' ? palette.accent : key === 'background' ? surface.background : surface.foreground}
+            value={layout[key]} onChange={color => updateLayout({[key]:color})}/>)}
+        </LabInspectorSection>
+        {reorderable && <LabInspectorSection title="Section" defaultExpanded={false}>
+          <label className="element-editor-toggle"><span>Include section in export</span>
+            <StudioCheckbox aria-label="Show section" checked={!section.hidden} onChange={event => onSection({hidden:!event.target.checked})} variant="switch"/></label>
+          <div className={styles.editorActions}>
+            <button type="button" onClick={() => onSection({move:-1})}>Move earlier</button>
+            <button type="button" onClick={() => onSection({move:1})}>Move later</button>
+            <button type="button" onClick={() => remove('section')}>Remove section</button>
+          </div>
+        </LabInspectorSection>}
+      </>}
     </StudioSidebar>
   );
 }

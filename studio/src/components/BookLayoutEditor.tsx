@@ -1,12 +1,12 @@
 'use client';
 
 import { useRef, type PointerEvent } from 'react';
-import type { BrandIdentity } from '@/lib/brandIdentity';
+import type { BrandAsset, BrandIdentity } from '@/lib/brandIdentity';
 import type { BookLayer, BookLayout } from '@/lib/bookEditing';
 import type { BookPage } from '@/lib/brandBookModel';
 import StudioSelect from './ui/StudioSelect';
-import StudioCheckbox from './ui/StudioCheckbox';
-import StudioRange from './ui/StudioRange';
+import ColorControl from './ui/ColorControl';
+import BookMediaPicker from './BookMediaPicker';
 import styles from './BrandBook.module.css';
 
 type Gesture = {
@@ -18,7 +18,7 @@ type Gesture = {
   height: number;
   resize: boolean;
 };
-const within = (value: number, min: number, max: number) => Math.round(Math.max(min, Math.min(max, value)) * 100) / 100;
+const rounded = (value: number) => Math.round(value * 100) / 100;
 
 export function BookLayers({
   identity,
@@ -52,30 +52,41 @@ export function BookLayers({
     };
     e.currentTarget.setPointerCapture(e.pointerId);
   }
+  function moveLayer(id: string, patch: Partial<BookLayer>) {
+    change?.({ ...page.layout, layers: (page.layout?.layers ?? []).map(item => item.id === id ? { ...item, ...patch } : item) });
+  }
   function move(e: PointerEvent<HTMLDivElement>) {
     const g = gesture.current;
     if (!g || !change || g.id !== e.pointerId) return;
     const dx = ((e.clientX - g.startX) * 100) / g.width;
     const dy = ((e.clientY - g.startY) * 100) / g.height;
     const patch = g.resize
-      ? { width: within(g.origin.width + dx, 2, 100) }
-      : { x: within(g.origin.x + dx, 0, 99), y: within(g.origin.y + dy, 0, 99) };
-    change({
-      ...page.layout,
-      layers: (page.layout?.layers ?? []).map((l) => (l.id === g.origin.id ? { ...l, ...patch } : l)),
-    });
+      ? { width: Math.max(1, rounded(g.origin.width + dx)) }
+      : { x: rounded(g.origin.x + dx), y: rounded(g.origin.y + dy) };
+    moveLayer(g.origin.id, patch);
   }
   return (
     <div className={styles.bookLayers} ref={overlay}>
       {(page.layout?.layers ?? []).map((layer) => {
-        const image = identity.assets.find((a) => a.id === layer.asset);
-        const color = identity.colors.find((c) => c.id === layer.color)?.hex;
+        const image = [...identity.assets, ...identity.proofAssets].find((a) => a.id === layer.asset);
+        const color = identity.colors.find((c) => c.id === layer.color)?.hex ?? (/^#[\da-f]{6}$/i.test(layer.color) ? layer.color : undefined);
         return (
           <div
             className={styles.bookLayer}
             data-selected={(!!change && selected === layer.id) || undefined}
             data-editing={!!change || undefined}
             key={layer.id}
+            tabIndex={change ? 0 : undefined}
+            aria-label={change ? 'Move ' + (image?.label || layer.text || 'element') : undefined}
+            onFocus={() => select?.(layer.id)}
+            onKeyDown={event => {
+              if (!change || !['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) return;
+              event.stopPropagation();
+              event.preventDefault();
+              const step = event.shiftKey ? 5 : 0.5;
+              if (event.key === 'ArrowUp' || event.key === 'ArrowDown') moveLayer(layer.id, { y: layer.y + (event.key === 'ArrowUp' ? -step : step) });
+              else moveLayer(layer.id, { x: layer.x + (event.key === 'ArrowLeft' ? -step : step) });
+            }}
             style={{
               left: layer.x + '%',
               top: layer.y + '%',
@@ -110,7 +121,7 @@ export function BookLayers({
               </>
             )}
             {change && selected === layer.id ? (
-              <div aria-hidden='true' className={styles.layerHandle} onPointerDown={(e) => begin(e, layer, true)} />
+              <div aria-hidden='true' data-pptx-ignore className={styles.layerHandle} onPointerDown={(e) => begin(e, layer, true)} />
             ) : null}
           </div>
         );
@@ -119,190 +130,86 @@ export function BookLayers({
   );
 }
 
-export function LayoutInspector({
-  identity,
-  layout,
-  selected,
-  select,
-  change,
-}: {
-  identity: BrandIdentity;
-  layout: BookLayout;
-  selected: string;
-  select: (id: string) => void;
-  change: (layout: BookLayout) => void;
+export type AddBookAssets = (projectId: string, assets: BrandAsset[]) => void;
+
+export function BookColorField({ label, identity, value = '', fallback, onChange }: {
+  label: string; identity: BrandIdentity; value?: string; fallback: string; onChange: (color: string) => void;
+}) {
+  const hex = identity.colors.find(item => item.id === value)?.hex ?? (/^#[\da-f]{6}$/i.test(value) ? value : fallback);
+  return (
+    <div className={styles.bookColorField}>
+      <ColorControl ariaLabel={label} label={label} value={hex} onChange={newHex => {
+        onChange(identity.colors.find(color => color.hex.toLowerCase() === newHex.toLowerCase())?.id ?? newHex);
+      }} />
+      {value && <button type="button" aria-label={'Reset '+label+' to automatic'} onClick={() => onChange('')}>Reset</button>}
+    </div>
+  );
+}
+
+export function LayoutInspector({ identity, layout, selected, select, change, onAddAssets }: {
+  identity: BrandIdentity; layout: BookLayout; selected: string; select: (id: string) => void;
+  change: (layout: BookLayout) => void; onAddAssets?: AddBookAssets;
 }) {
   const layers = layout.layers ?? [];
-  const layer = layers.find((l) => l.id === selected);
-  const assets = identity.assets.filter((asset) =>
-    ['image', 'logo', 'product', 'background', 'icon', 'texture'].includes(asset.type),
-  );
-  const paletteOptions = identity.colors.map((c) => ({ label: c.name + ' (' + c.hex + ')', value: c.id }));
+  const layer = layers.find(item => item.id === selected);
+  const assets = [...identity.assets, ...identity.proofAssets];
   function patchLayer(patch: Partial<BookLayer>) {
-    change({ ...layout, layers: layers.map((l) => (l.id === selected ? { ...l, ...patch } : l)) });
+    change({ ...layout, layers: layers.map(item => item.id === selected ? { ...item, ...patch } : item) });
   }
-  function add(kind: BookLayer['kind']) {
+  function add(kind: BookLayer['kind'], media?: BrandAsset) {
     const id = crypto.randomUUID();
-    const next: BookLayer = {
-      id,
-      kind,
-      text: kind === 'text' ? 'Text' : 'Guideline',
-      asset: kind === 'image' ? (assets[0]?.id ?? '') : '',
-      color: '',
-      x: 6,
-      y: Math.min(75, 10 + layers.length * 12),
-      width: kind === 'image' ? 26 : 45,
-      scale: 1,
-    };
+    const next: BookLayer = { id, kind, text: media?.label ?? (kind === 'text' ? 'Text' : 'Guideline'),
+      asset: media?.id ?? '', color: '', x: 8, y: 14 + (layers.length % 5) * 12, width: kind === 'image' ? 30 : 45, scale: 1 };
     change({ ...layout, layers: [...layers, next] });
     select(id);
   }
   return (
     <div className={styles.layoutInspector}>
-      <fieldset>
-        <legend>Page palette</legend>
-        {(['background', 'foreground', 'accent'] as const).map((key) => (
-          <label key={key}>
-            {key === 'foreground' ? 'Text' : key === 'background' ? 'Background' : 'Accent'}
-            <StudioSelect
-              ariaLabel={'Page ' + key}
-              value={layout[key] || '$auto'}
-              onValueChange={(value) => change({ ...layout, [key]: value === '$auto' ? '' : value })}
-              options={[{ label: 'From brand', value: '$auto' }, ...paletteOptions]}
-            />
-          </label>
-        ))}
-      </fieldset>
-      <fieldset>
-        <legend>Template</legend>
-        <label>
-          <StudioCheckbox
-            aria-label='Show template content'
-            checked={!layout.hideTemplate}
-            onChange={(e) => change({ ...layout, hideTemplate: !e.target.checked })}
-          />
-          Show template content
-        </label>
-        <label>
-          <StudioCheckbox
-            aria-label='Show page footer'
-            checked={!layout.hideFooter}
-            onChange={(e) => change({ ...layout, hideFooter: !e.target.checked })}
-          />
-          Show page footer when available
-        </label>
-        {!layout.hideTemplate &&
-          (['templateX', 'templateY', 'templateScale'] as const).map((key, index) => (
-            <label key={key}>
-              {['Horizontal offset (%)', 'Vertical offset (%)', 'Content scale (%)'][index]}
-              <StudioRange
-                aria-label={key}
-                min={index === 2 ? 25 : -100}
-                max={index === 2 ? 300 : 100}
-                value={index === 2 ? Math.round((layout.templateScale ?? 1) * 100) : (layout[key] ?? 0)}
-                onChange={(e) => change({ ...layout, [key]: Number(e.target.value) / (index === 2 ? 100 : 1) })}
-              />
-              <output>{index === 2 ? Math.round((layout.templateScale ?? 1) * 100) : (layout[key] ?? 0)}%</output>
+      <BookMediaPicker identity={identity} onAddAssets={onAddAssets} onInsert={asset => add('image', asset)} />
+      <div className={styles.editorActions}>
+        <button type="button" onClick={() => add('text')}>Add text</button>
+        <button type="button" onClick={() => add('do')}>Add do</button>
+        <button type="button" onClick={() => add('dont')}>Add don’t</button>
+      </div>
+      {!!layers.length && <label>Page elements
+        <StudioSelect ariaLabel="Select page element" value={layer?.id ?? '$none'} onValueChange={select}
+          options={[{ label: 'Select an element', value: '$none' }, ...layers.map((item, i) => ({
+            value: item.id, label: (i+1) + '. ' + (item.kind === 'image'
+              ? [...identity.assets, ...identity.proofAssets].find(asset => asset.id === item.asset)?.label ?? 'Image'
+              : item.text.slice(0, 36) || item.kind)
+          }))]}/>
+      </label>}
+      {layer && <>
+        {layer.kind === 'image' && <label>Replace image
+          <StudioSelect ariaLabel="Replace element image" value={layer.asset} onValueChange={asset => patchLayer({asset})}
+            options={assets.filter(item => item.type !== 'motion').map(item => ({label:item.label,value:item.id}))}/>
+        </label>}
+        {layer.kind !== 'image' && <>
+          <label>Content<textarea aria-label="Element content" rows={3} maxLength={8192} value={layer.text} onChange={event => patchLayer({ text: event.target.value })}/></label>
+          <BookColorField label="Element colour" identity={identity} value={layer.color} fallback="#181818" onChange={color => patchLayer({color})}/>
+        </>}
+        <div className={styles.numericFields}>
+          {(['width','scale'] as const).filter(key => key === 'width' || layer.kind !== 'image').map(key => (
+            <label key={key}>{ {width:'Width (%)',scale:'Text size (%)'}[key] }
+              <input type="number" step="any" min={0}
+                key={layer.id + key + ':' + layer[key]}
+                defaultValue={key === 'scale' ? rounded(layer.scale * 100) : layer[key]}
+                onDoubleClick={event => event.currentTarget.select()}
+                onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+                onBlur={event => {
+                  const input = event.currentTarget;
+                  if (input.value && input.validity.valid && Number.isFinite(input.valueAsNumber)) {
+                    patchLayer({ [key]: input.valueAsNumber / (key === 'scale' ? 100 : 1) });
+                  } else input.value = input.defaultValue;
+                }}/>
             </label>
           ))}
-      </fieldset>
-      <fieldset>
-        <legend>Page elements</legend>
-        <div className={styles.editorActions}>
-          {(['text', 'image', 'do', 'dont'] as const).map((kind) => (
-            <button type='button' disabled={kind === 'image' && !assets.length} key={kind} onClick={() => add(kind)}>
-              + {{ text: 'Text', image: 'Asset', do: 'Do', dont: "Don't" }[kind]}
-            </button>
-          ))}
         </div>
-        {layers.length > 0 && (
-          <label>
-            Element
-            <StudioSelect
-              ariaLabel='Select page element'
-              value={layer?.id ?? '$none'}
-              onValueChange={(id) => select(id === '$none' ? '' : id)}
-              options={[
-                { label: 'Select an element', value: '$none' },
-                ...layers.map((l, i) => ({
-                  value: l.id,
-                  label:
-                    i +
-                    1 +
-                    '. ' +
-                    (l.kind === 'image'
-                      ? (assets.find((a) => a.id === l.asset)?.label ?? 'Asset')
-                      : l.text.slice(0, 35) || l.kind),
-                })),
-              ]}
-            />
-          </label>
-        )}
-        {layer && (
-          <>
-            {layer.kind === 'image' ? (
-              <label>
-                Asset
-                <StudioSelect
-                  ariaLabel='Element asset'
-                  value={layer.asset}
-                  onValueChange={(value) => patchLayer({ asset: value })}
-                  options={assets.map((a) => ({ value: a.id, label: a.label }))}
-                />
-              </label>
-            ) : (
-              <>
-                <label>
-                  Content
-                  <textarea
-                    aria-label='Element content'
-                    rows={3}
-                    maxLength={8192}
-                    value={layer.text}
-                    onChange={(e) => patchLayer({ text: e.target.value })}
-                  />
-                </label>
-                <label>
-                  Colour
-                  <StudioSelect
-                    ariaLabel='Element colour'
-                    value={layer.color || '$auto'}
-                    onValueChange={(value) => patchLayer({ color: value === '$auto' ? '' : value })}
-                    options={[{ value: '$auto', label: 'Page text' }, ...paletteOptions]}
-                  />
-                </label>
-              </>
-            )}
-            <div className={styles.numericFields}>
-              {(['x', 'y', 'width', 'scale'] as const).map((key) => (
-                <label key={key}>
-                  {{ x: 'X (%)', y: 'Y (%)', width: 'Width (%)', scale: 'Scale (%)' }[key]}
-                  <input
-                    type='number'
-                    step='1'
-                    min={key === 'scale' ? 25 : key === 'width' ? 2 : 0}
-                    max={key === 'scale' ? 300 : key === 'width' ? 100 : 99}
-                    value={key === 'scale' ? Math.round(layer.scale * 100) : layer[key]}
-                    onChange={(e) => {
-                      if (e.target.value && e.target.validity.valid)
-                        patchLayer({ [key]: Number(e.target.value) / (key === 'scale' ? 100 : 1) });
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
-            <button
-              type='button'
-              onClick={() => {
-                change({ ...layout, layers: layers.filter((l) => l.id !== selected) });
-                select('');
-              }}
-            >
-              Remove element
-            </button>
-          </>
-        )}
-      </fieldset>
+        <button type="button" onClick={() => {
+          change({ ...layout, layers: layers.filter(item => item.id !== selected) });
+          select('');
+        }}>Remove element</button>
+      </>}
     </div>
   );
 }

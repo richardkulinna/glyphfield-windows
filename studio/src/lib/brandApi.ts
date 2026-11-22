@@ -136,7 +136,7 @@ export function renderBrandKitRequest(input: unknown): { content: string; filena
       throw new BrandApiError('Project snapshot must use schemaVersion 1 and match the identity id.', 'project');
     }
   }
-  const file = brandKitTextFile(identity, format as BrandKitTextFormat, body.project);
+  const file = brandKitTextFile(identity, format as BrandKitTextFormat, body.project, body.identity as BrandIdentity);
   return {
     content: new TextDecoder().decode(file.bytes),
     filename: file.name.split('/').pop()!,

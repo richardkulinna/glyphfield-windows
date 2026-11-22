@@ -78,6 +78,15 @@ describe('/api/brand/kit', () => {
     await expect(mismatch.json()).resolves.toMatchObject({ error: { field: 'project' } });
   });
 
+  it('keeps sparse authored identities in the Markdown appendix without materializing omitted defaults', async () => {
+    const authored = { id: identity.id, name: identity.name, colors: identity.colors, typography: identity.typography, assets: [], future: { enabled: false } };
+    const response = await POST_KIT(post('/api/brand/kit', { format: 'markdown', identity: authored }));
+    expect(response.status).toBe(200);
+    const appendix = (await response.text()).split('\n## Identity source\n')[1]!;
+    const payload = appendix.match(/^(`{3,})json\n([\s\S]*?)\n\1$/m)!;
+    expect(JSON.parse(payload[2]!)).toEqual(authored);
+  });
+
   it('rejects an invalid identity with the first precise issue', async () => {
     const response = await POST_KIT(post('/api/brand/kit', { format: 'css', identity: { ...identity, colors: [{ hex: 'red', id: 'ink', name: 'Ink', role: 'Text' }] } }));
     expect(response.status).toBe(400);

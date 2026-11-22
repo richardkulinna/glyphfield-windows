@@ -83,7 +83,7 @@ export function brandKitFontFaces(identity: BrandIdentity): string[] {
 }
 
 /** For a shared kit retain asset metadata and packaged paths without copying local binary payloads. */
-export function shareableBrandSource(identity: BrandIdentity, preserveSourcePaths = false): BrandIdentity {
+export function shareableBrandSource(identity: BrandIdentity, preserveSourcePaths = false, authored = identity): BrandIdentity {
   const manifest = brandKitManifest(identity);
   const paths = new Map(manifest.assets.map(({ asset, name }) => [asset, name]));
   const fonts = new Map(manifest.fonts.filter(({ include }) => include).map(({ font, name }) => [font.id, name]));
@@ -91,20 +91,34 @@ export function shareableBrandSource(identity: BrandIdentity, preserveSourcePath
     if (preserveSourcePaths && !/^data:/i.test(path)) return path;
     return packaged ?? (/^https?:\/\//i.test(path) ? path : '');
   }
-  const assetView = (asset: BrandAsset) => ({ ...asset, path: portablePath(asset.path, paths.get(asset)) });
+  // HTTP accepts older, sparse identities. Use resolved records to locate their
+  // kit files, and retain the exact values and keys supplied by the author.
+  const assetViews = (records: BrandAsset[], resolved: BrandAsset[]) => records.map((asset, index) => ({
+    ...asset, path: portablePath(asset.path, paths.get(resolved[index]!)),
+  }));
   return {
-    ...identity,
-    assets: identity.assets.map(assetView),
-    proofAssets: identity.proofAssets.map(assetView),
-    ...(identity.fonts ? { fonts: identity.fonts.map((font) => ({ ...font, path: portablePath(font.path, fonts.get(font.id)) })) } : {}),
+    ...authored,
+    assets: assetViews(authored.assets, identity.assets),
+    ...(authored.proofAssets ? { proofAssets: assetViews(authored.proofAssets, identity.proofAssets) } : {}),
+    ...(authored.fonts ? { fonts: authored.fonts.map((font) => ({ ...font, path: portablePath(font.path, fonts.get(font.id)) })) } : {}),
+    ...(authored.motion ? { motion: authored.motion.map((entry) => {
+      if (!/^data:/i.test(entry.previewPath)) return entry;
+      const file = manifest.assets.find(({ asset }) => asset.path === entry.previewPath);
+      return { ...entry, previewPath: portablePath(entry.previewPath, file?.name) };
+    }) } : {}),
   };
 }
 
-/** JSON exports can contain data URLs inside saved SVG, CSS or serialized editor documents. */
-export function printableSource(value: unknown): string {
+/** Tool drafts can contain media inside saved SVG, CSS or serialized editor documents. */
+export function printableSource(value: unknown, packagedFiles?: ReadonlyMap<string, string>): string {
   return JSON.stringify(value, (_key, item: unknown) => {
     if (typeof item !== 'string' || !item.toLowerCase().includes('data:')) return item;
-    return item.replace(/data:(?:[a-z\d.+-]+\/[a-z\d.+-]+)?(?:;[\w=.+-]+)*,[^\s"'<>\\)`]+/gi, '[embedded file]');
+    // "data:text/plain,hello" in a written instruction or code example is text.
+    // Only externalize media; first resolve whole URLs, including SVG with spaces.
+    const packaged = packagedFiles?.get(item);
+    if (packaged) return packaged;
+    const media = /data:((?:image|font|video|audio|model)\/[\w.+-]+|application\/(?:octet-stream|pdf|font[\w.+-]*|vnd\.ms-fontobject))(?:;[\w=.+-]+)*,[^\s"'<>\\)`]+/gi;
+    return item.replace(media, (uri: string, mime: string) => packagedFiles?.get(uri) ?? `[embedded ${mime}; file not packaged]`);
   }, 2) ?? 'null';
 }
 

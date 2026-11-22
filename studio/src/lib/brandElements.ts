@@ -1289,9 +1289,9 @@ function objectSetting(value: unknown, path: string): Record<string, unknown> {
 
 const SETTING_READERS: Record<keyof BrandElementSettings, SettingReader> = {
   accentColor: hexSetting,
-  artworkScale: numberSetting(40, 200),
-  artworkX: numberSetting(-120, 120),
-  artworkY: numberSetting(-120, 120),
+  artworkScale: numberSetting(1, Infinity),
+  artworkX: numberSetting(-Infinity, Infinity),
+  artworkY: numberSetting(-Infinity, Infinity),
   assetId: textSetting(200),
   assetOpacity: numberSetting(0, 100),
   assetPlacement: enumSetting(['background', 'banner', 'card', 'header']),

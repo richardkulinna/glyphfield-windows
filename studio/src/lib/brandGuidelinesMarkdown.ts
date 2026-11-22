@@ -3,6 +3,7 @@ import { auditBrandHealth, brandContrastResults } from './brandHealth';
 import { brandKitManifest, printableSource, shareableBrandSource } from './brandKitManifest';
 import { brandRoleTypeStep, brandTypeScale } from './brandTokens';
 import { COLOR_MODES, resolveSemanticColors, SEMANTIC_COLOR_ROLES, semanticContrastChecks } from './colorSystem';
+import { getBrandIconPacks } from './brandMedia';
 
 function table(headings: string[], rows: (string | number | undefined)[][]): string {
   const cell = (value: string | number | undefined) => String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
@@ -63,11 +64,13 @@ function sampleExamples(samples: NonNullable<BrandIdentity['samples']>): string 
     release ? block('Latest update', [release.title, ...release.items]) : '');
 }
 
-export function brandGuidelinesMarkdown(identity: BrandIdentity, project?: unknown): string {
-  const portable = shareableBrandSource(identity, true);
+export function brandGuidelinesMarkdown(identity: BrandIdentity, project?: unknown, authored = identity): string {
+  const portable = shareableBrandSource(identity, true, authored);
   const report = auditBrandHealth(identity);
   const { assets, fonts } = brandKitManifest(identity);
   const filenames = new Map(assets.map((entry) => [entry.asset, entry.name]));
+  const packagedFiles = new Map(assets.map(({ asset, name }) => [asset.path, name]));
+  for (const { font, include, name } of fonts) if (include) packagedFiles.set(font.path, name);
   const usedFonts = new Map(fonts.map(({ font }) => [font.id, font]));
   const { strategy, voice, graphicSystem } = identity;
   const sections = [
@@ -88,6 +91,8 @@ export function brandGuidelinesMarkdown(identity: BrandIdentity, project?: unkno
       ...(voice.examples ?? []).map((example) => [`### ${example.context}`, `**Write**\n\n${example.write}`, `**Avoid**\n\n${example.avoid}`].join('\n\n'))),
     section('Brand dossier', ...Object.entries(DOSSIER_FIELDS).map(([key, label]) => block(label, identity.dossier[key as keyof BrandIdentity['dossier']]))),
     section('Graphic system', block('Recognizable device', graphicSystem.device), block('Selected drawing preset', graphicSystem.pattern),
+      block('Custom device asset', graphicSystem.assetId),
+      graphicSystem.variants?.length ? block('Device artwork by color', table(['Color ID', 'Asset ID'], graphicSystem.variants.map((variant) => [variant.colorId, variant.assetId]))) : '',
       block('Device rationale', graphicSystem.description), block('Composition', graphicSystem.composition),
       block('Image direction', graphicSystem.imageDirection), block('System rules', graphicSystem.rules),
       block('Visual defaults', codeBlock(printableSource(identity.style), 'json')), block('Art direction', codeBlock(printableSource(identity.artDirection), 'json'))),
@@ -107,6 +112,8 @@ export function brandGuidelinesMarkdown(identity: BrandIdentity, project?: unkno
     section('Logos and asset inventory', table(['ID', 'Label', 'Type', 'Usage', 'Redistribution', 'Kit path'], [...identity.assets, ...identity.proofAssets].map((item) => [
       item.id, item.label, item.type, item.usage, item.redistribution, filenames.has(item) ? `\`${filenames.get(item)}\`` : 'Metadata only',
     ]))),
+    ...getBrandIconPacks(identity.assets).map((pack) => section(`Icon pack: ${pack.name}`,
+      table(['Icon', 'Asset ID', 'Kit path'], pack.icons.map((icon) => [icon.label, icon.id, filenames.get(icon) ?? 'Metadata only'])))),
     section('Audience, products and proof', block('Audiences', identity.audiences), block('Products', identity.products),
       ...(identity.productDetails ?? []).map((product) => block(product.name, product.summary)), block('Customers', identity.customers),
       block('Proof statements', identity.proof), block('Sources', identity.sourceNotes)),
@@ -115,8 +122,8 @@ export function brandGuidelinesMarkdown(identity: BrandIdentity, project?: unkno
   if (identity.samples) sections.push(sampleExamples(identity.samples));
   if (identity.references.length) sections.push(section('Research references', codeBlock(printableSource(identity.references), 'json')));
   if (identity.motion.length) sections.push(section('Motion', codeBlock(printableSource(identity.motion), 'json')));
-  sections.push(section('Identity source', 'Field names, array order, original text, empty values, and additional project-specific fields are preserved below. Embedded files are represented by their kit paths when distributable.', codeBlock(printableSource(portable), 'json')));
-  if (project !== undefined) sections.push(section('Project drafts and saved documents', codeBlock(printableSource(project), 'json')));
+  sections.push(section('Identity source', 'This JSON is the authored identity, including custom fields, empty values and list order. Embedded media use kit paths where packaged. An empty file path or an embedded-file notice means the bytes are unavailable in the shared kit. Use the ZIP for the actual files.', codeBlock(printableSource(portable, packagedFiles), 'json')));
+  if (project !== undefined) sections.push(section('Project drafts and saved documents', codeBlock(printableSource(project, packagedFiles), 'json')));
   return sections.filter(Boolean).join('\n\n') + '\n';
 }
 

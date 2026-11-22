@@ -250,3 +250,28 @@ export function loadFontAxes(url: string): Promise<FontAxis[] | null> {
 export function fontAxis(axes: readonly FontAxis[] | null | undefined, tag: string): FontAxis | undefined {
   return axes?.find((axis) => axis.tag === tag);
 }
+
+/** Read the desktop family name so a stylesheet alias still matches the installed font in PowerPoint. */
+export async function readFontFamilyName(buffer: ArrayBuffer): Promise<string | undefined> {
+  if (buffer.byteLength < 12) return;
+  const view = new DataView(buffer);
+  const signature = tagAt(view, 0);
+  const names = signature === 'wOFF' ? await woffTable(view, 'name') :
+    signature === 'wOF2' ? await woff2Table(view, 'name') : sfntTable(view, 'name');
+  if (!names || names === 'missing' || names.byteLength < 6) return;
+  const count = names.getUint16(2), strings = names.getUint16(4);
+  let best: { score: number; name: string } | undefined;
+  for (let index = 0; index < count; index++) {
+    const record = 6 + index * 12;
+    if (record + 12 > names.byteLength) break;
+    const platform = names.getUint16(record), language = names.getUint16(record + 4), id = names.getUint16(record + 6);
+    if ((id !== 16 && id !== 1) || (platform !== 0 && platform !== 3)) continue;
+    const offset = strings + names.getUint16(record + 10), length = names.getUint16(record + 8);
+    if (offset + length > names.byteLength || !length || length % 2) continue;
+    const score = (id === 16 ? 4 : 0) + (language === 0x0409 ? 2 : 0) + Number(platform === 3);
+    if (best && best.score >= score) continue;
+    const name = new TextDecoder('utf-16be').decode(new Uint8Array(names.buffer, names.byteOffset + offset, length)).trim();
+    if (name) best = { score, name };
+  }
+  return best?.name;
+}
